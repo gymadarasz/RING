@@ -2,8 +2,9 @@
 
 #define RING_INIT_DELAY 10
 #define RING_TOKEN_DELAY 1
+#define RING_CLOCK_DELAY 5
 #define RING_BUS_LENGTH 3
-#define RING_DATA_BITS 16
+#define RING_DATA_BITS 12
 #define RING_MASTER true
 #define RING_SLAVE false
 
@@ -14,11 +15,15 @@ public:
     int address;
     Bus bus;
     int error;
-    int prev;
-    int next;
-    int state;
+    int tokenPrev;
+    int tokenNext;
+    int tokenState;
+    int clock;
+    int clockState;
     int init(bool master, int prev, int next, int clock, Bus bus);
     void loop(Handler tickHandler);
+    void send(unsigned int data);
+    unsigned int read();
 };
 
 int Ring::init(bool master, int prev, int next, int clock, Bus bus) {
@@ -36,22 +41,67 @@ int Ring::init(bool master, int prev, int next, int clock, Bus bus) {
         this->bus[i] = bus[i];
     }
     error = 0;
-    this->prev = prev;
-    this->next = next;
-    state = master ? LOW : HIGH;
-    if(master) digitalWrite(next, LOW);
+    tokenPrev = prev;
+    tokenNext = next;
+    tokenState = master ? LOW : HIGH;
+    this->clock = clock;
+    clockState = LOW;
+    digitalWrite(clock, clockState);
+    if(master) digitalWrite(next, tokenState);
     return length-1;
 }
 
 void Ring::loop(Handler tickHandler) {
-    if(digitalRead(prev) != state) {
+    if(digitalRead(tokenPrev) != tokenState) {
         
         // .. do stuff
         tickHandler();
+        
         delay(RING_TOKEN_DELAY);
         
-        state = !state;
-        digitalWrite(next, state);
-    }    
+        tokenState = !tokenState;
+        digitalWrite(tokenNext, tokenState);
+    } else if(digitalRead(clock) != clockState) {
+            
+        // .. read stuff
+        int data = read();
+        if(device->id == 1) {
+        debug("receive: ", data);
+        }
+          
+    }
+}
+
+void Ring::send(unsigned int data) {
+    //debug("send:", data);
+    for(int i=0; i < RING_DATA_BITS;) {
+        for(int j=0; j < RING_BUS_LENGTH && i < RING_DATA_BITS; j++) {
+            int bit = data & 1;
+            data >>= 1;
+            //debug("nth:", i);
+            //debug("bit:", bit);
+            digitalWrite(bus[j], bit);
+            i++;
+        }
+        clockState = !clockState;
+        digitalWrite(clock, clockState);
+        delay(RING_CLOCK_DELAY);
+    }
+}
+
+unsigned int Ring::read() {
+    unsigned int data = 0;
+    for(int i=0; i < RING_DATA_BITS;) {
+        while(digitalRead(clock) == clockState);
+        clockState = !clockState;
+        //data >>= RING_BUS_LENGTH;
+        for(int j=0; j < RING_BUS_LENGTH && i < RING_DATA_BITS; j++) {
+            //data >>= 1;
+            data = data | (digitalRead(bus[j]) << i);
+            //data = data | (bit << RING_DATA_BITS);
+            i++;
+        }
+    }
+    return data;
 }
 
