@@ -1,98 +1,224 @@
 #include "error.cpp"
 
-#define RING_INIT_DELAY 25
-#define RING_TOKEN_DELAY 1
-#define RING_CLOCK_DELAY 10
+
+#define RING_DELAY_INIT 100
+#define RING_DELAY_TOKEN 10
+#define RING_DELAY_CLOCK 25
+
 #define RING_BUS_LENGTH 3
 #define RING_DATA_BITS 16
+#define RING_QUEUE_LENGTH 100
+#define RING_MULTIPLE_DEFAULT 1
+
 #define RING_DATA_SIGNED true
-#define RING_QUEUE_LENGTH 10
-#define RING_MASTER true
-#define RING_SLAVE false
-#define RING_BROADCAST -1
+#define RING_IS_MASTER true
+#define RING_IS_SLAVE false
+#define RING_ADDR_BROADCAST -1
+#define RING_ADDR_IGNORED -2
 
 typedef int Bus[RING_BUS_LENGTH];
 
 typedef struct {
-    int address;
+    int from;
+    int to;
     int length;
     int* buffer;
 } Pack;
 
-typedef void (*Reader)(Pack);
+void debug(const char* msg, Pack pack) {
+    debug(msg);
+    debug("from:", pack.from);
+    debug("to:", pack.to);
+    debug("length:", pack.length);    
+    for(int i=0; i < pack.length; i++) {
+        debug(" - buffer[",i,"]:", pack.buffer[i]);
+    }
+}
 
+typedef void (*Receiver)(Pack);
+
+/**
+ * Ring class for Token Ring
+ */
 class Ring {
 public:
+    // @int address used address for communication
     int address;
+    
+    // @int count of emulated element (address extension)
+    int multiple;
+    
+    // @Bus pins of bus
     Bus bus;
+    
+    // @int store for last error code
+    // @todo not implemented yet
     int error;
+    
+    // @int pin for previous element of token ring
     int tokenPrev;
+    
+    // @int pin for next element of token ring
     int tokenNext;
+    
+    // @int state of token to ckeck when we given the token
     int tokenState;
+    
+    // @int pin for clock the communication on BUS
     int clock;
+    
+    // @int state of clock to check the change of bitbaing tick-tack
     int clockState;
+    
+    // @Pack pack store the given data
     Pack pack;
-    Reader reader;
+    
+    // @Receiver receiver callback to handle the received data
+    Receiver receiver;
+    
+    // @Pack queue[] queue for sending response messages
     Pack queue[RING_QUEUE_LENGTH];
+    
+    // @int element of queue
     int queueNext;
-    int init(bool master, int prev, int next, int clock, Bus bus, Reader reader, int* buffer);
+    
+    // @bool (private) do we have a token at the moment - for send()
+    bool tick;
+    
+    /**
+     * Initialize token ring
+     * 
+     * @bool master         it is the master or a slave element of token ring
+     * @int prev            pin for previous element to get the token
+     * @int next            pin for next element to pass the token
+     * @int clock           pin for clock while passing the data on BUS
+     * @Bus bus             pins for BUS of communication
+     * @Reader reader       callback when data received
+     * @int* buffer         buffer for received data
+     * @int multiple        greater than 0, 1 is not multiple, 1+ more then one device emulation on ring
+     * @int                 return: length of initialized token ring
+     */
+    int init(
+        bool master, int prev, int next, int clock, Bus bus, 
+        Receiver reader, int* buffer, 
+        int multiple = RING_MULTIPLE_DEFAULT
+    );
+    
+    /**
+     * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+     * !!!! CALL ONLY ONCE IN MAIN SKETCH LOOP!! !!!!
+     * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+     * 
+     * @param Handler tickHandler will be called at every token cycle
+     */
     void loop(Handler tickHandler);
+    
     void send(int data);
     int read();
-    void send(int to, Pack pack);
-    void sendQueue(int to, Pack pack);
+    void send(Pack pack);
+    void sendQueue(Pack pack);
+    
+    /**
+     * receiving messages into pack 
+     *  return true if message addressed to us, false if message ignored
+     * 
+     * @bool 
+     */
     bool receive();
+    
+    bool is4me(int to);
+    bool is4all(int to);
+    
     
 };
 
-int Ring::init(bool master, int prev, int next, int clock, Bus bus, Reader reader, int* buffer) {
+int Ring::init(
+    bool master, int prev, int next, int clock, Bus bus, 
+    Receiver receiver, int* buffer, 
+    int multiple
+) {
+    // Initialize token ring default state as LOW,
     digitalWrite(prev, LOW);
     digitalWrite(next, LOW);
-    delay(RING_INIT_DELAY);
+    // wait an initial delay, measure the start time,
+    delay(RING_DELAY_INIT);
     long start = millis();
+    // after wait for our moment with the token 
     while(!master && digitalRead(prev) != HIGH);
-    address = master ? 0 : (millis() - start) / RING_INIT_DELAY;
-    delay(RING_INIT_DELAY);
+    // in the initialization queue and calculate the address(es).
+    address = master ? 0 : (millis() - start) / RING_DELAY_INIT;
+    // waiting for many times how multiple we are
+    delay(RING_DELAY_INIT * multiple);
+    // and then pass the token to the next (set next to HIGH)
     digitalWrite(next, HIGH);
+    this->multiple = multiple;
+    
+    // Master wait when get back the token from the end of ring 
+    // so the cycle is finished and we will know how long is it.
     while(master && digitalRead(prev) != HIGH);
-    int length = (millis() - start) / RING_INIT_DELAY;
+    int length = (millis() - start) / RING_DELAY_INIT;
+    
+    // store the pins of BUS for later communication
     for(int i=0; i < RING_BUS_LENGTH; i++) {
         this->bus[i] = bus[i];
     }
-    error = 0;
+    
+    // initialize the error code for zero (no any errors)
+    error = 0; // todo: need to implement it?
+    
+    // store the token ring pass pins
     tokenPrev = prev;
     tokenNext = next;
+    // and master will start the token cycle (token state set to LOW first)
     tokenState = master ? LOW : HIGH;
+    
+    // store the clock pin and set it LOW by default
     this->clock = clock;
     clockState = LOW;
     digitalWrite(clock, clockState);
+    
+    // store the pointer of reading buffer and reading handler
     this->pack.buffer = buffer;
-    this->reader = reader;
+    this->receiver = receiver;
+    
+    // initialize the response queue pointer to 0 as empty
     queueNext = 0;
+    
+    // we don't have token at the moment
+    tick = false;
+    
+    // master start the token ring dance 
+    // and pass back the full length of ring
     if(master) digitalWrite(next, tokenState);
     return length-1;
 }
 
 void Ring::loop(Handler tickHandler) {
     if(digitalRead(tokenPrev) != tokenState) {
+        tick = true;
         
         while(queueNext) {
             queueNext--;
-            send(queue[queueNext].address, queue[queueNext]);
+            if(is4me(queue[queueNext].to)) {
+                receiver(queue[queueNext]);
+            } else {
+                send(queue[queueNext]);
+            }
         }
         
         // .. do stuff
         tickHandler();
         
-        delay(RING_TOKEN_DELAY);
+        delay(RING_DELAY_TOKEN);
         
         tokenState = !tokenState;
         digitalWrite(tokenNext, tokenState);
+        tick = false;
     } else if(digitalRead(clock) != clockState) {
             
         // .. read pack stuff
         if(receive()) {
-            reader(pack);
+            receiver(pack);
         }
 //        if(device->id == 1) {
 //        debug("receive: ", data);
@@ -101,35 +227,56 @@ void Ring::loop(Handler tickHandler) {
     }
 }
 
+bool Ring::is4me(int to) {
+    return to >= address && to <= address+(multiple-1);
+}
+
+bool Ring::is4all(int to) {
+    return to == RING_ADDR_BROADCAST;
+}
+
 bool Ring::receive() {
+    // read additional meta info of message
     int to = read();
     int from = read();
     int length = read();
-    bool me = to == RING_BROADCAST || to == address;
+    // check if it's sent to us
+    bool me = is4all(to) || is4me(to);
     if(me) {
-        pack.address = from;
+        // store meta addressing if its for us
+        pack.to = to;
+        pack.from = from;
         pack.length = length;
     }
+    // read message contents
     for(int i=0; i<length; i++) {
         int data = read();
         if(me) {
+            // store if it's for as
             pack.buffer[i] = data;
         }
     }
     return me;
 }
 
-void Ring::send(int to, Pack pack) {
-    send(to);
-    send(address);
-    send(pack.length);
-    for(int i=0; i < pack.length; i++) {
-        send(pack.buffer[i]);
+void Ring::send(Pack pack) {
+    // todo: check if the message is emulated by us!
+    if(tick && !is4me(pack.to)) {
+        send(pack.to);
+        send(pack.from);
+        send(pack.length);
+        for(int i=0; i < pack.length; i++) {
+            send(pack.buffer[i]);
+        }
+    } else {
+        sendQueue(pack);
     }
 }
 
-void Ring::sendQueue(int to, Pack pack) {
-    queue[queueNext].address = to;
+void Ring::sendQueue(Pack pack) {
+    debug(" -> send to queue");
+    queue[queueNext].to = pack.to;
+    queue[queueNext].from = pack.from;
     queue[queueNext].buffer = pack.buffer;
     queue[queueNext].length = pack.length;
     queueNext++;
@@ -146,7 +293,7 @@ void Ring::send(int data) {
         }
         clockState = !clockState;
         digitalWrite(clock, clockState);
-        delay(RING_CLOCK_DELAY);
+        delay(RING_DELAY_CLOCK);
     }
 }
 

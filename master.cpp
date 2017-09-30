@@ -7,16 +7,20 @@ static Ring ring;
 int buffer[BUFFER_SIZE_MASTER];
 
 void onMasterReceive(Pack pack) {
-    debug("MASTER RECEIVE, from:", pack.address);
-    debug("length:", pack.length);
-    debug("data[0]:", pack.buffer[0]);
-    debug("data[1]:", pack.buffer[1]);
-    debug("data[2]:", pack.buffer[2]);
+    if(pack.from == ring.address) {
+        error(1);
+    }
+    if(pack.to != ring.address) {
+        error(2);
+    }
+    debug("MASTER RECEIVE:", pack);
 }
 
 void setup() {
     Bus bus = {3, 4, 5}; 
-    int length = ring.init(RING_MASTER, 1, 0, 2, bus, onMasterReceive, buffer);
+    int length = ring.init(RING_IS_MASTER, 1, 0, 2, bus, onMasterReceive, buffer);
+    debug("address:", ring.address);
+    debug("multiple:", ring.multiple);
     debug("length:", length);
     
     //delay(100);
@@ -34,19 +38,26 @@ void setup() {
 void tick() {
     Pack pack1;
     int buffer1[] = {100,200,300};
+    pack1.from = ring.address;
+    pack1.to = 1;
     pack1.buffer = buffer1;
     pack1.length = 3;
     
     Pack pack2;
     int buffer2[] = {-100,-200,-300};
+    pack2.from = ring.address;
+    pack2.to = 2;
     pack2.buffer = buffer2;
     pack2.length = 3;
     
-    ring.send(1, pack1);
-    ring.send(2, pack2);
+    debug("MASTER SEND:", pack1);
+    ring.send(pack1);
+    debug("MASTER SEND:", pack2);
+    ring.send(pack2);
 }
 
 void loop() {
     ring.loop(tick);
+    
 }
 
