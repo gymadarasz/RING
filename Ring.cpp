@@ -1,11 +1,12 @@
 #include "error.cpp"
 
-#define RING_INIT_DELAY 10
+#define RING_INIT_DELAY 25
 #define RING_TOKEN_DELAY 1
-#define RING_CLOCK_DELAY 5
+#define RING_CLOCK_DELAY 10
 #define RING_BUS_LENGTH 3
-#define RING_DATA_BITS 24
+#define RING_DATA_BITS 16
 #define RING_DATA_SIGNED true
+#define RING_QUEUE_LENGTH 10
 #define RING_MASTER true
 #define RING_SLAVE false
 #define RING_BROADCAST -1
@@ -13,7 +14,7 @@
 typedef int Bus[RING_BUS_LENGTH];
 
 typedef struct {
-    int from;
+    int address;
     int length;
     int* buffer;
 } Pack;
@@ -32,11 +33,14 @@ public:
     int clockState;
     Pack pack;
     Reader reader;
+    Pack queue[RING_QUEUE_LENGTH];
+    int queueNext;
     int init(bool master, int prev, int next, int clock, Bus bus, Reader reader, int* buffer);
     void loop(Handler tickHandler);
     void send(int data);
     int read();
     void send(int to, Pack pack);
+    void sendQueue(int to, Pack pack);
     bool receive();
     
 };
@@ -64,12 +68,18 @@ int Ring::init(bool master, int prev, int next, int clock, Bus bus, Reader reade
     digitalWrite(clock, clockState);
     this->pack.buffer = buffer;
     this->reader = reader;
+    queueNext = 0;
     if(master) digitalWrite(next, tokenState);
     return length-1;
 }
 
 void Ring::loop(Handler tickHandler) {
     if(digitalRead(tokenPrev) != tokenState) {
+        
+        while(queueNext) {
+            queueNext--;
+            send(queue[queueNext].address, queue[queueNext]);
+        }
         
         // .. do stuff
         tickHandler();
@@ -97,7 +107,7 @@ bool Ring::receive() {
     int length = read();
     bool me = to == RING_BROADCAST || to == address;
     if(me) {
-        pack.from = from;
+        pack.address = from;
         pack.length = length;
     }
     for(int i=0; i<length; i++) {
@@ -116,6 +126,13 @@ void Ring::send(int to, Pack pack) {
     for(int i=0; i < pack.length; i++) {
         send(pack.buffer[i]);
     }
+}
+
+void Ring::sendQueue(int to, Pack pack) {
+    queue[queueNext].address = to;
+    queue[queueNext].buffer = pack.buffer;
+    queue[queueNext].length = pack.length;
+    queueNext++;
 }
 
 

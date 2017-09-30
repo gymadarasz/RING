@@ -7,7 +7,7 @@ static Ring ring;
 int buffer[BUFFER_SIZE_MASTER];
 
 void onMasterReceive(Pack pack) {
-    debug("MASTER RECEIVE, from:", pack.from);
+    debug("MASTER RECEIVE, from:", pack.address);
     debug("length:", pack.length);
     debug("data[0]:", pack.buffer[0]);
     debug("data[1]:", pack.buffer[1]);
