@@ -4,12 +4,21 @@
 #define RING_TOKEN_DELAY 1
 #define RING_CLOCK_DELAY 5
 #define RING_BUS_LENGTH 3
-#define RING_DATA_BITS 8
+#define RING_DATA_BITS 24
 #define RING_DATA_SIGNED true
 #define RING_MASTER true
 #define RING_SLAVE false
+#define RING_BROADCAST -1
 
 typedef int Bus[RING_BUS_LENGTH];
+
+typedef struct {
+    int from;
+    int length;
+    int* buffer;
+} Pack;
+
+typedef void (*Reader)(Pack);
 
 class Ring {
 public:
@@ -21,13 +30,18 @@ public:
     int tokenState;
     int clock;
     int clockState;
-    int init(bool master, int prev, int next, int clock, Bus bus);
+    Pack pack;
+    Reader reader;
+    int init(bool master, int prev, int next, int clock, Bus bus, Reader reader, int* buffer);
     void loop(Handler tickHandler);
     void send(int data);
     int read();
+    void send(int to, Pack pack);
+    bool receive();
+    
 };
 
-int Ring::init(bool master, int prev, int next, int clock, Bus bus) {
+int Ring::init(bool master, int prev, int next, int clock, Bus bus, Reader reader, int* buffer) {
     digitalWrite(prev, LOW);
     digitalWrite(next, LOW);
     delay(RING_INIT_DELAY);
@@ -48,6 +62,8 @@ int Ring::init(bool master, int prev, int next, int clock, Bus bus) {
     this->clock = clock;
     clockState = LOW;
     digitalWrite(clock, clockState);
+    this->pack.buffer = buffer;
+    this->reader = reader;
     if(master) digitalWrite(next, tokenState);
     return length-1;
 }
@@ -64,23 +80,50 @@ void Ring::loop(Handler tickHandler) {
         digitalWrite(tokenNext, tokenState);
     } else if(digitalRead(clock) != clockState) {
             
-        // .. read stuff
-        int data = read();
-        if(device->id == 1) {
-        debug("receive: ", data);
+        // .. read pack stuff
+        if(receive()) {
+            reader(pack);
         }
+//        if(device->id == 1) {
+//        debug("receive: ", data);
+//        }
           
     }
 }
 
+bool Ring::receive() {
+    int to = read();
+    int from = read();
+    int length = read();
+    bool me = to == RING_BROADCAST || to == address;
+    if(me) {
+        pack.from = from;
+        pack.length = length;
+    }
+    for(int i=0; i<length; i++) {
+        int data = read();
+        if(me) {
+            pack.buffer[i] = data;
+        }
+    }
+    return me;
+}
+
+void Ring::send(int to, Pack pack) {
+    send(to);
+    send(address);
+    send(pack.length);
+    for(int i=0; i < pack.length; i++) {
+        send(pack.buffer[i]);
+    }
+}
+
+
 void Ring::send(int data) {
-    //debug("send:", data);
     for(int i=0; i < RING_DATA_BITS;) {
         for(int j=0; j < RING_BUS_LENGTH && i < RING_DATA_BITS; j++) {
             int bit = data & 1;
             data >>= 1;
-            //debug("nth:", i);
-            //debug("bit:", bit);
             digitalWrite(bus[j], bit);
             i++;
         }
@@ -95,11 +138,8 @@ int Ring::read() {
     for(int i=0; i < RING_DATA_BITS;) {
         while(digitalRead(clock) == clockState);
         clockState = !clockState;
-        //data >>= RING_BUS_LENGTH;
         for(int j=0; j < RING_BUS_LENGTH && i < RING_DATA_BITS; j++) {
-            //data >>= 1;
             data = data | (digitalRead(bus[j]) << i);
-            //data = data | (bit << RING_DATA_BITS);
             i++;
         }
     }
