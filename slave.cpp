@@ -3,9 +3,10 @@
 static Ring ring;
 
 void setup() {
-    RING(RING_SLAVE, 1, 0, 2, 3, 4, 5);
-    
+    Bus bus = {3, 4, 5}; 
+    ring.init(RING_SLAVE, 1, 0, 2, bus);
 }
 
 void loop() {
+    ring.loop();
 }
