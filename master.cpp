@@ -11,10 +11,12 @@ void setup() {
     //simulation->stop();
 }
 
-unsigned int cnt = 1000;
+int cnt = 1;
 void tick() {
     //debug("tick");
-    ring.send(cnt++);
+    ring.send(-cnt);
+    //ring.send(-cnt);
+    cnt++;
 }
 
 void loop() {

@@ -4,7 +4,8 @@
 #define RING_TOKEN_DELAY 1
 #define RING_CLOCK_DELAY 5
 #define RING_BUS_LENGTH 3
-#define RING_DATA_BITS 12
+#define RING_DATA_BITS 8
+#define RING_DATA_SIGNED true
 #define RING_MASTER true
 #define RING_SLAVE false
 
@@ -22,8 +23,8 @@ public:
     int clockState;
     int init(bool master, int prev, int next, int clock, Bus bus);
     void loop(Handler tickHandler);
-    void send(unsigned int data);
-    unsigned int read();
+    void send(int data);
+    int read();
 };
 
 int Ring::init(bool master, int prev, int next, int clock, Bus bus) {
@@ -72,7 +73,7 @@ void Ring::loop(Handler tickHandler) {
     }
 }
 
-void Ring::send(unsigned int data) {
+void Ring::send(int data) {
     //debug("send:", data);
     for(int i=0; i < RING_DATA_BITS;) {
         for(int j=0; j < RING_BUS_LENGTH && i < RING_DATA_BITS; j++) {
@@ -89,8 +90,8 @@ void Ring::send(unsigned int data) {
     }
 }
 
-unsigned int Ring::read() {
-    unsigned int data = 0;
+int Ring::read() {
+    int data = 0;
     for(int i=0; i < RING_DATA_BITS;) {
         while(digitalRead(clock) == clockState);
         clockState = !clockState;
@@ -101,6 +102,11 @@ unsigned int Ring::read() {
             //data = data | (bit << RING_DATA_BITS);
             i++;
         }
+    }
+    
+    // sign
+    if(RING_DATA_SIGNED && data > (1<<RING_DATA_BITS)/2) {
+        data -= 1<<RING_DATA_BITS;
     }
     return data;
 }
