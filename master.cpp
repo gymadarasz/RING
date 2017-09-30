@@ -13,7 +13,7 @@ void onMasterReceive(Pack pack) {
     if(pack.to != ring.address) {
         error(2);
     }
-    debug("MASTER RECEIVE:", pack);
+    debug("(f) MASTER RECEIVE:", pack);
 }
 
 void setup() {
@@ -50,9 +50,9 @@ void tick() {
     pack2.buffer = buffer2;
     pack2.length = 3;
     
-    debug("MASTER SEND:", pack1);
+    debug("(d) MASTER SEND:", pack1);
     ring.send(pack1);
-    debug("MASTER SEND:", pack2);
+    debug("(e) MASTER SEND:", pack2);
     ring.send(pack2);
 }
 

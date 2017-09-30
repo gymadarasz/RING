@@ -113,9 +113,34 @@ public:
      */
     void loop(Handler tickHandler);
     
-    void send(int data);
-    int read();
+    /**
+     * Sending package
+     * 
+     * @param pack
+     */
     void send(Pack pack);
+    
+private:
+    
+    /**
+     * Sending data
+     * 
+     * @param data
+     */
+    void send(int data);
+    
+    /**
+     * Reading data
+     * 
+     * @return data
+     */
+    int read();
+    
+    /**
+     * Sending into a queue, realy send when we given the token
+     * 
+     * @param pack
+     */
     void sendQueue(Pack pack);
     
     /**
@@ -126,7 +151,20 @@ public:
      */
     bool receive();
     
+    /**
+     * Is message addressed for this device
+     * 
+     * @param to
+     * @return 
+     */
     bool is4me(int to);
+    
+    /**
+     * Is message is a broadcast
+     * 
+     * @param to
+     * @return 
+     */
     bool is4all(int to);
     
     
@@ -260,7 +298,7 @@ bool Ring::receive() {
 }
 
 void Ring::send(Pack pack) {
-    // todo: check if the message is emulated by us!
+    // check if the message is emulated by us!
     if(tick && !is4me(pack.to)) {
         send(pack.to);
         send(pack.from);

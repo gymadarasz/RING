@@ -19,20 +19,20 @@ void onSlaveReceive(Pack pack) {
     if(pack.to != ring.address) {
         error(4);
     }
-    debug("SLAVE RECEIVE:", pack);
+    debug("(a) SLAVE RECEIVE:", pack);
     
     packQueue1.from = pack.to;
     packQueue1.to = pack.from;
     packQueue1.buffer = buffer1;
     packQueue1.length = 3;
-    debug("SLAVE SEND:", packQueue1);   
+    debug("(b) SLAVE SEND:", packQueue1);
     ring.send(packQueue1);
     
     packQueue2.from = pack.to;
     packQueue2.to = 4;
     packQueue2.buffer = buffer2;
     packQueue2.length = 3;
-    debug("SLAVE SEND:", packQueue1); 
+    debug("(c) SLAVE SEND:", packQueue1); 
     ring.send(packQueue2);
 }
 
