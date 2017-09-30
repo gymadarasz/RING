@@ -11,6 +11,11 @@ void setup() {
     //simulation->stop();
 }
 
-void loop() {
-    ring.loop();
+void tick() {
+    debug("tick");
 }
+
+void loop() {
+    ring.loop(tick);
+}
+

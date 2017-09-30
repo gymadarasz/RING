@@ -18,7 +18,7 @@ public:
     int next;
     int state;
     int init(bool master, int prev, int next, int clock, Bus bus);
-    void loop();
+    void loop(Handler tickHandler);
 };
 
 int Ring::init(bool master, int prev, int next, int clock, Bus bus) {
@@ -43,13 +43,15 @@ int Ring::init(bool master, int prev, int next, int clock, Bus bus) {
     return length-1;
 }
 
-void Ring::loop() {
+void Ring::loop(Handler tickHandler) {
     if(digitalRead(prev) != state) {
         
         // .. do stuff
+        tickHandler();
         delay(RING_TOKEN_DELAY);
         
         state = !state;
         digitalWrite(next, state);
     }    
 }
+

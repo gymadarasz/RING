@@ -7,6 +7,10 @@ void setup() {
     ring.init(RING_SLAVE, 1, 0, 2, bus);
 }
 
+void tick() {
+    // ...
+}
+
 void loop() {
-    ring.loop();
+    ring.loop(tick);
 }
