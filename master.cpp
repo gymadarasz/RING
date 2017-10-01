@@ -16,6 +16,9 @@ void onMasterReceive(Pack pack) {
     debug("(f) MASTER RECEIVE:", pack);
 }
 
+Pack pack;
+int obuffer[10];
+
 void setup() {
     Bus bus = {3, 4, 5}; 
     int length = ring.init(RING_IS_MASTER, 1, 0, 2, bus, onMasterReceive, buffer);
@@ -23,37 +26,26 @@ void setup() {
     debug("multiple:", ring.multiple);
     debug("length:", length);
     
+    
+    pack.from = ring.address;
+    pack.to = RING_ADDR_BROADCAST;
+    pack.buffer = obuffer;
+    pack.length = 1;
+    obuffer[0] = 1234;
+    debug("(d) MASTER SEND (*BROADCASK*):", pack);
+    ring.send(pack);
+    
+    obuffer[0] = 1000;
+    pack.to = 1;
+    debug("(e) MASTER SEND:", pack);
+    ring.send(pack);
+    
     //delay(100);
     //simulation->stop();
 }
 
-//int cnt = 1;
-//void tick() {
-//    //debug("tick");
-//    ring.send(-cnt);
-//    //ring.send(-cnt);
-//    cnt++;
-//}
-
 void tick() {
-    Pack pack1;
-    int buffer1[] = {100,200,300};
-    pack1.from = ring.address;
-    pack1.to = 1;
-    pack1.buffer = buffer1;
-    pack1.length = 3;
-    
-    Pack pack2;
-    int buffer2[] = {-100,-200,-300};
-    pack2.from = ring.address;
-    pack2.to = 2;
-    pack2.buffer = buffer2;
-    pack2.length = 3;
-    
-    debug("(d) MASTER SEND:", pack1);
-    ring.send(pack1);
-    debug("(e) MASTER SEND:", pack2);
-    ring.send(pack2);
+    // ...
 }
 
 void loop() {

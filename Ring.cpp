@@ -76,12 +76,6 @@ public:
     // @Receiver receiver callback to handle the received data
     Receiver receiver;
     
-    // @Pack queue[] queue for sending response messages
-    Pack queue[RING_QUEUE_LENGTH];
-    
-    // @int element of queue
-    int queueNext;
-    
     // @bool (private) do we have a token at the moment - for send()
     bool tick;
     
@@ -121,6 +115,12 @@ public:
     void send(Pack pack);
     
 private:
+    
+    // @Pack queue[] queue for sending response messages
+    Pack queue[RING_QUEUE_LENGTH];
+    
+    // @int element of queue
+    int queueNext;
     
     /**
      * Sending data
@@ -197,8 +197,10 @@ int Ring::init(
     int length = (millis() - start) / RING_DELAY_INIT;
     
     // store the pins of BUS for later communication
+    // and initialize all bit as LOW
     for(int i=0; i < RING_BUS_LENGTH; i++) {
         this->bus[i] = bus[i];
+        digitalWrite(bus[i], LOW);
     }
     
     // initialize the error code for zero (no any errors)
@@ -300,6 +302,7 @@ bool Ring::receive() {
 void Ring::send(Pack pack) {
     // check if the message is emulated by us!
     if(tick && !is4me(pack.to)) {
+        debug(" -> send to RING", pack.buffer[0]);
         send(pack.to);
         send(pack.from);
         send(pack.length);
@@ -307,17 +310,13 @@ void Ring::send(Pack pack) {
             send(pack.buffer[i]);
         }
     } else {
-        sendQueue(pack);
+        debug(" -> send to QUEUE", pack.buffer[0]);
+        queue[queueNext].to = pack.to;
+        queue[queueNext].from = pack.from;
+        queue[queueNext].length = pack.length;
+        queue[queueNext].buffer = pack.buffer;
+        queueNext++;
     }
-}
-
-void Ring::sendQueue(Pack pack) {
-    debug(" -> send to queue");
-    queue[queueNext].to = pack.to;
-    queue[queueNext].from = pack.from;
-    queue[queueNext].buffer = pack.buffer;
-    queue[queueNext].length = pack.length;
-    queueNext++;
 }
 
 

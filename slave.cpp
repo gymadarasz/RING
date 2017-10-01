@@ -16,24 +16,17 @@ void onSlaveReceive(Pack pack) {
     if(pack.from == ring.address) {
         error(3);
     }
-    if(pack.to != ring.address) {
+    if(pack.to != RING_ADDR_BROADCAST && pack.to != ring.address) {
         error(4);
     }
     debug("(a) SLAVE RECEIVE:", pack);
     
-    packQueue1.from = pack.to;
-    packQueue1.to = pack.from;
-    packQueue1.buffer = buffer1;
-    packQueue1.length = 3;
-    debug("(b) SLAVE SEND:", packQueue1);
-    ring.send(packQueue1);
-    
-    packQueue2.from = pack.to;
-    packQueue2.to = 4;
-    packQueue2.buffer = buffer2;
-    packQueue2.length = 3;
-    debug("(c) SLAVE SEND:", packQueue1); 
-    ring.send(packQueue2);
+    if(pack.to != RING_ADDR_BROADCAST) {
+        pack.to++;
+        pack.buffer[0]++;
+        debug("(b) SLAVE FORWARDING:", pack);
+        ring.send(pack);
+    }
 }
 
 void setup() {
