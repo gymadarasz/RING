@@ -1,2 +1,4 @@
 /nbproject/private/
 /RingCircuit_simulation/
+*.log
+circuit.state
