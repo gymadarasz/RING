@@ -2,9 +2,9 @@
 
 #define RING_PACK_DEBUG // TODO: remove or comment out this on live system
 
-#define RING_DELAY_INIT 25
-#define RING_DELAY_TOKEN 25
-#define RING_DELAY_CLOCK 25
+#define RING_DELAY_INIT 5
+#define RING_DELAY_TOKEN 5
+#define RING_DELAY_CLOCK 5
 
 #define RING_BUS_LENGTH 3
 // TODO:
@@ -23,15 +23,6 @@
 #define RING_ADDR_BROADCAST -1
 
 #define RING_DEFAULT_HANDLER loop   // arduino sketch loop()
-
-
-
-// --------------------------------------------------------
-// ------------------------- BUS --------------------------
-// --------------------------------------------------------
-
-//typedef int Bus[RING_BUS_LENGTH];
-
 
 
 // --------------------------------------------------------
@@ -169,8 +160,9 @@ typedef void (*Receiver)(Pack*);
 class Ring {
 public:
     
-    int init(bool master, int prev, int next, int clock, const int* bus,
-            Receiver onPackReceivedHandler, int multiple = 1, 
+    int init(const bool master, const int prev, const int next, const int clock, 
+            const int* bus, Receiver onPackReceivedHandler, 
+            const int multiple = 1, 
             Handler onClockWaitingLoopHandler = RING_DEFAULT_HANDLER,
             Handler onTokenOwnedLoopHandler = RING_DEFAULT_HANDLER, 
             Handler onTokenWaitingLoopHandler = RING_DEFAULT_HANDLER
@@ -186,22 +178,14 @@ private:
     
     const int* bus;
     
-    void busReset(int level) {
-        for(int i=0; i < RING_BUS_LENGTH; i++) {
-            //this->bus[i] = bus[i];
-            digitalWrite(bus[i], HIGH);
-        }
-    }
-    
+    void busReset(int level);
     
     
     // --------------------------------------------------------
     // ------------------------ QUEUE -------------------------
     // --------------------------------------------------------
     
-    
     Queue queue;
-    
     
     
     // --------------------------------------------------------
@@ -209,15 +193,12 @@ private:
     // --------------------------------------------------------
     
     bool initialized;
-    
     static Ring* that;
-    
     int slaveCounter;
     
     static void initReceiveHandler(Pack* pack);
     static void initTokenOwnedHandler();
 
-    
     
     // --------------------------------------------------------
     // ------------------------ TOKEN -------------------------
@@ -232,75 +213,33 @@ private:
     bool tokenOwned;
     
     Handler onTokenWaitingLoopHandler;
-    
     Handler onTokenOwnedLoopHandler;
     
-    void tokenReset(bool master) {
-        tokenPrevState = digitalRead(tokenPrev);
-        tokenNextState = digitalRead(tokenNext);
-        tokenOwned = master;
-    }
+    void tokenReset(bool master);
+    void tokenPass();
+    bool tokenCheck();
     
-    void tokenPass() {
-        tokenNextState = !tokenNextState;
-        digitalWrite(tokenNext, tokenNextState);
-        debug("Token passed");
-        tokenOwned = false;
-    }
-        
-    bool tokenCheck() {
-        if(digitalRead(tokenPrev) != tokenPrevState) {
-            tokenPrevState = !tokenPrevState;
-            debug("Token given");
-            tokenOwned = true;
-        }
-        return tokenOwned;
-    }
     
     // --------------------------------------------------------
     // ---------------------- CLOCK ---------------------------
     // --------------------------------------------------------
     
     int clock;
-    
     int clockState;
     
-    bool clockReset(int level) {
-        digitalWrite(clock, level);
-        clockState = level;
-    }
+    bool clockReset(int level);
+    bool isClockTick();
+    void clockTick();
+    void clockWaiting();
     
-    bool isClockTick() {
-        if(digitalRead(clock) != clockState) {
-            clockState = !clockState;
-            //debug("Clock ticked");
-            return true;
-        }
-        return false;
-    }
-    
-    void clockTick() {
-        //debug("Clock tick!!");
-        clockState = !clockState;
-        digitalWrite(clock, clockState);
-    }
-    
-    void clockWaiting() {       
-        while(!isClockTick()) {
-            if(NULL != onClockWaitingLoopHandler) onClockWaitingLoopHandler();
-            delay(1);
-        }
-    }
     
     // --------------------------------------------------------
     // ----------------------- PACK ---------------------------
     // --------------------------------------------------------
     
-    
     int buffer[RING_BUFFER_LENGTH];
         
     Pack pack;
-    
     
     
     // --------------------------------------------------------
@@ -308,24 +247,17 @@ private:
     // --------------------------------------------------------
     
     int address;
-    
     int multiple;
-    
-    int length;
     
     void sendClock();
     void readClock();
     
     void send(int data);
-  
     int read();
-    
     bool receive();
-    
     bool listen();
     
     Receiver onPackReceivedHandler;
-    
     Handler onClockWaitingLoopHandler;
     
 };
@@ -339,10 +271,10 @@ private:
 // -----------------------------------------------------------------
 
 
-int Ring::init(bool master, int prev, int next, int clock, const int* bus,
-        Receiver onPackReceivedHandler, int multiple, 
-        Handler onClockWaitingLoopHandler, Handler onTokenOwnedLoopHandler, 
-        Handler onTokenWaitingLoopHandler
+int Ring::init(const bool master, const int prev, const int next, 
+        const int clock, const int* bus, Receiver onPackReceivedHandler, 
+        const int multiple, Handler onClockWaitingLoopHandler, 
+        Handler onTokenOwnedLoopHandler, Handler onTokenWaitingLoopHandler
 ) {
     
     this->tokenPrev = prev;
@@ -362,7 +294,6 @@ int Ring::init(bool master, int prev, int next, int clock, const int* bus,
     if(master) {
         delay(RING_DELAY_INIT);
         address = RING_ADDR_MASTER;
-        send(pack.make(address, RING_ADDR_BROADCAST, address+multiple));
         tokenPass();
     } else {
         this->onTokenOwnedLoopHandler = initTokenOwnedHandler;
@@ -374,19 +305,86 @@ int Ring::init(bool master, int prev, int next, int clock, const int* bus,
     
     while(!tokenCheck()) delay(1);
     tokenPass();
+
     
-    debug("Initalization finished, address:", address);
+    debug("Initialization finished, address:", address);
     this->onPackReceivedHandler = onPackReceivedHandler;
     this->onClockWaitingLoopHandler = onClockWaitingLoopHandler;
     this->onTokenWaitingLoopHandler = onTokenWaitingLoopHandler;
     this->onTokenOwnedLoopHandler = onTokenOwnedLoopHandler;
     
     while(true) {
-        while(!listen()) delay(1);
+        debug("...");
+        listen();
+        delay(1);
         tokenPass();
     }
     
 }
+
+// ------------ BUS -------------
+
+void Ring::busReset(int level) {
+    for(int i=0; i < RING_BUS_LENGTH; i++) {
+        //this->bus[i] = bus[i];
+        digitalWrite(bus[i], HIGH);
+    }
+}
+
+// ----------- TOKEN ------------
+
+void Ring::tokenReset(bool master) {
+    tokenPrevState = digitalRead(tokenPrev);
+    tokenNextState = digitalRead(tokenNext);
+    tokenOwned = master;
+}
+
+void Ring::tokenPass() {
+    tokenNextState = !tokenNextState;
+    digitalWrite(tokenNext, tokenNextState);
+    debug("Token passed");
+    tokenOwned = false;
+}
+
+bool Ring::tokenCheck() {
+    if(digitalRead(tokenPrev) != tokenPrevState) {
+        tokenPrevState = !tokenPrevState;
+        debug("Token given");
+        tokenOwned = true;
+    }
+    return tokenOwned;
+}
+
+// ---------- CLOCK -----------
+
+bool Ring::clockReset(int level) {
+    digitalWrite(clock, level);
+    clockState = level;
+}
+
+bool Ring::isClockTick() {
+    if(digitalRead(clock) != clockState) {
+        clockState = !clockState;
+        //debug("Clock ticked");
+        return true;
+    }
+    return false;
+}
+
+void Ring::clockTick() {
+    //debug("Clock tick!!");
+    clockState = !clockState;
+    digitalWrite(clock, clockState);
+}
+
+void Ring::clockWaiting() {       
+    while(!isClockTick()) {
+        if(NULL != onClockWaitingLoopHandler) onClockWaitingLoopHandler();
+        delay(1);
+    }
+}
+    
+// -------------- RING ---------------
 
 bool Ring::listen() {
     if(tokenCheck()) {
