@@ -1,6 +1,8 @@
 #include "error.cpp"
 
-#define RING_PACK_DEBUG // TODO: remove or comment out this on live system
+// TODO: remove or comment out these lines on live system
+#define RING_PACK_DEBUG
+#define RING_DELAY_SIMULATION delay(1)
 
 #define RING_DELAY_INIT 5
 #define RING_DELAY_TOKEN 5
@@ -194,7 +196,6 @@ private:
     
     bool initialized;
     static Ring* that;
-    int slaveCounter;
     
     static void initReceiveHandler(Pack* pack);
     static void initTokenOwnedHandler();
@@ -248,6 +249,7 @@ private:
     
     int address;
     int multiple;
+    int length;
     
     void sendClock();
     void readClock();
@@ -255,6 +257,7 @@ private:
     void send(int data);
     int read();
     bool receive();
+    bool receiveCheck();
     bool listen();
     
     Receiver onPackReceivedHandler;
@@ -285,29 +288,35 @@ int Ring::init(const bool master, const int prev, const int next,
     
     that = this;
     pack.buffer = buffer;
-    initialized = false;
+    initialized = master;
     
     clockReset(HIGH);
     busReset(HIGH);
     tokenReset(master);
     
+    this->onTokenOwnedLoopHandler = initTokenOwnedHandler;
+    this->onPackReceivedHandler = initReceiveHandler;
     if(master) {
         delay(RING_DELAY_INIT);
         address = RING_ADDR_MASTER;
         tokenPass();
     } else {
-        this->onTokenOwnedLoopHandler = initTokenOwnedHandler;
-        this->onPackReceivedHandler = initReceiveHandler;
         while(!initialized) {
-            while(!listen()) delay(1);
+            while(!listen()) RING_DELAY_SIMULATION;
         }
     }
     
-    while(!tokenCheck()) delay(1);
+    while(!tokenCheck()) {
+        receiveCheck();
+        RING_DELAY_SIMULATION;
+    }
     tokenPass();
 
     
     debug("Initialization finished, address:", address);
+    debug("Length:", length);
+
+    
     this->onPackReceivedHandler = onPackReceivedHandler;
     this->onClockWaitingLoopHandler = onClockWaitingLoopHandler;
     this->onTokenWaitingLoopHandler = onTokenWaitingLoopHandler;
@@ -316,8 +325,7 @@ int Ring::init(const bool master, const int prev, const int next,
     while(true) {
         //debug("...");
         listen();
-        delay(1);
-        tokenPass();
+        RING_DELAY_SIMULATION;
     }
     
 }
@@ -380,11 +388,24 @@ void Ring::clockTick() {
 void Ring::clockWaiting() {       
     while(!isClockTick()) {
         if(NULL != onClockWaitingLoopHandler) onClockWaitingLoopHandler();
-        delay(1);
+        RING_DELAY_SIMULATION;
     }
 }
     
 // -------------- RING ---------------
+
+
+bool Ring::receiveCheck() {
+    if(isClockTick()) {
+        // .. read pack stuff
+        if(receive()) {
+            //debug("Package received:", &pack);
+            this->onPackReceivedHandler(&pack);
+        }
+        return true;
+    }
+    return false;
+}
 
 bool Ring::listen() {
     if(tokenCheck()) {
@@ -402,16 +423,9 @@ bool Ring::listen() {
         
         tokenPass();
         return true;
-    } else if(isClockTick()) {
-        // .. read pack stuff
-        if(receive()) {
-            //debug("Package received:", &pack);
-            onPackReceivedHandler(&pack);
-        }
-          
-    } else {
-        if(NULL != onTokenWaitingLoopHandler) onTokenWaitingLoopHandler();
     }
+    
+    if(!receiveCheck() && NULL != onTokenWaitingLoopHandler) onTokenWaitingLoopHandler();
     return false;
 }
 
@@ -521,6 +535,7 @@ void Ring::initReceiveHandler(Pack* pack) {
         that->address = pack->buffer[0];
         //debug("Slave set the address:", that->address);
     }
+    that->length = pack->buffer[0];
 }
 
 void Ring::initTokenOwnedHandler() {
