@@ -314,7 +314,7 @@ int Ring::init(const bool master, const int prev, const int next,
     this->onTokenOwnedLoopHandler = onTokenOwnedLoopHandler;
     
     while(true) {
-        debug("...");
+        //debug("...");
         listen();
         delay(1);
         tokenPass();
@@ -342,14 +342,14 @@ void Ring::tokenReset(bool master) {
 void Ring::tokenPass() {
     tokenNextState = !tokenNextState;
     digitalWrite(tokenNext, tokenNextState);
-    debug("Token passed");
+    //debug("Token passed");
     tokenOwned = false;
 }
 
 bool Ring::tokenCheck() {
     if(digitalRead(tokenPrev) != tokenPrevState) {
         tokenPrevState = !tokenPrevState;
-        debug("Token given");
+        //debug("Token given");
         tokenOwned = true;
     }
     return tokenOwned;
