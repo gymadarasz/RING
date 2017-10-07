@@ -8,15 +8,16 @@
 #define RING_DELAY_TOKEN 5
 #define RING_DELAY_CLOCK 5
 
-#define RING_BUS_LENGTH 3
-// TODO:
-//#define RING_TYPE_DIGITAL 0
-//#define RING_TYPE_ANALOG 1
-//#define RING_ADDRESS_BITS 12
-//#define RING_TYPE_BITS 1
+#define RING_PACKTYPE_DIGITAL 0
+#define RING_PACKTYPE_ANALOG 1
+
+#define RING_ADDRESS_BITS 12
+#define RING_PACK_TYPE_BITS 1
+#define RING_LENGTH_BITS 8
 #define RING_DATA_BITS 12
-#define RING_QUEUE_LENGTH 100
-#define RING_BUFFER_LENGTH 100
+
+#define RING_QUEUE_LENGTH 32
+#define RING_BUFFER_LENGTH 128
 
 #define RING_DATA_SIGNED true
 #define RING_MASTER true
@@ -28,6 +29,18 @@
 
 
 // --------------------------------------------------------
+// ------------------------- BUS --------------------------
+// --------------------------------------------------------
+
+typedef struct {
+    const int length;
+    const int* pins;
+    const int length_analog;
+    const int* pins_analog;
+} Bus;
+
+
+// --------------------------------------------------------
 // ------------------------- PACK -------------------------
 // --------------------------------------------------------
 
@@ -35,9 +48,13 @@ class Pack {
 public:
     int from;
     int to;
+    int type;
     int length;
     int* buffer;
-    Pack* make(int from, int to = RING_ADDR_BROADCAST, int length = 0, int* buffer = NULL);
+    Pack* make(
+            int from, int to = RING_ADDR_BROADCAST, int length = 0, 
+            int* buffer = NULL, int type = RING_PACKTYPE_DIGITAL
+    );
     void copy(Pack* pack);
     bool isBroadcast();
     static bool isBroadcast(int to);
@@ -47,9 +64,10 @@ public:
     static bool isAddressedBetween(int to, int address, int multiple);
 };
 
-Pack* Pack::make(int from, int to, int length, int* buffer) {
+Pack* Pack::make(int from, int to, int length, int* buffer, int type) {
     this->from = from;
     this->to = to;
+    this->type = type;
     if(NULL == buffer) { // only one data sending?
         this->length = 1;
         this->buffer[0] = length;
@@ -63,6 +81,7 @@ Pack* Pack::make(int from, int to, int length, int* buffer) {
 void Pack::copy(Pack* pack) {
     pack->from = from;
     pack->to = to;
+    pack->type = type;
     pack->length = length;
     for(int i=0; i < length; i++) {
         pack->buffer[i] = buffer[i];
@@ -162,8 +181,10 @@ typedef void (*Receiver)(Pack*);
 class Ring {
 public:
     
+    Pack pack;
+    
     int init(const bool master, const int prev, const int next, const int clock, 
-            const int* bus, Receiver onPackReceivedHandler, 
+            const Bus bus, Receiver onPackReceivedHandler, 
             const int multiple = 1, 
             Handler onClockWaitingLoopHandler = RING_DEFAULT_HANDLER,
             Handler onTokenOwnedLoopHandler = RING_DEFAULT_HANDLER, 
@@ -171,14 +192,14 @@ public:
     );
       
     bool send(Pack* pack);
-      
+    
 private:
     
     // --------------------------------------------------------
     // ------------------------- BUS --------------------------
     // --------------------------------------------------------
     
-    const int* bus;
+    const Bus* bus;
     
     void busReset(int level);
     
@@ -239,8 +260,6 @@ private:
     // --------------------------------------------------------
     
     int buffer[RING_BUFFER_LENGTH];
-        
-    Pack pack;
     
     
     // --------------------------------------------------------
@@ -252,10 +271,9 @@ private:
     int length;
     
     void sendClock();
-    void readClock();
     
-    void send(int data);
-    int read();
+    void send(int data, int bits);
+    int read(int bits);
     bool receive();
     bool receiveCheck();
     bool listen();
@@ -275,7 +293,7 @@ private:
 
 
 int Ring::init(const bool master, const int prev, const int next, 
-        const int clock, const int* bus, Receiver onPackReceivedHandler, 
+        const int clock, const Bus bus, Receiver onPackReceivedHandler, 
         const int multiple, Handler onClockWaitingLoopHandler, 
         Handler onTokenOwnedLoopHandler, Handler onTokenWaitingLoopHandler
 ) {
@@ -283,7 +301,7 @@ int Ring::init(const bool master, const int prev, const int next,
     this->tokenPrev = prev;
     this->tokenNext = next;
     this->clock = clock;
-    this->bus = bus;
+    this->bus = &bus;
     this->multiple = multiple;
     
     that = this;
@@ -333,9 +351,9 @@ int Ring::init(const bool master, const int prev, const int next,
 // ------------ BUS -------------
 
 void Ring::busReset(int level) {
-    for(int i=0; i < RING_BUS_LENGTH; i++) {
+    for(int i=0; i < bus->length; i++) {
         //this->bus[i] = bus[i];
-        digitalWrite(bus[i], HIGH);
+        digitalWrite(bus->pins[i], HIGH);
     }
 }
 
@@ -429,22 +447,41 @@ bool Ring::listen() {
     return false;
 }
 
+void Ring::sendClock() {
+    //debug("Clocking out");
+    clockTick();
+    delay(RING_DELAY_CLOCK);
+}
+
 bool Ring::send(Pack* pack) {
     //debug("Package sending:", pack);
     if(queue.isFull()) {
-        error("queue full",1);
+        error("queue full", 1);
         return false;
     }
     
     if(tokenCheck()) {
-        send(pack->from);
-        send(pack->to);
-        send(pack->length);
+        send(pack->from, RING_ADDRESS_BITS);
+        send(pack->to, RING_ADDRESS_BITS);
+        send(pack->type, RING_PACK_TYPE_BITS);
+        send(pack->length, RING_LENGTH_BITS);
+        int j = 0; // analog pin
         for(int i=0; i < pack->length; i++) {
-            send(pack->buffer[i]);
+            if(pack->type == RING_PACKTYPE_DIGITAL) {
+                send(pack->buffer[i], RING_DATA_BITS);
+            } else if(pack->type == RING_PACKTYPE_ANALOG) {
+                analogWrite(bus->pins_analog[j], pack->buffer[i]);
+                j++;
+                if(j > bus->length_analog) {
+                    j = 0;
+                    sendClock();
+                }
+            } else {
+                error("Wrong pack type:", pack->type);
+            }
         }
         sendClock();
-        if(NULL != onPackReceivedHandler) onPackReceivedHandler(pack);
+        if(!initialized && NULL != onPackReceivedHandler) onPackReceivedHandler(pack);
     } else {
         queue.push(pack);
     }
@@ -452,32 +489,26 @@ bool Ring::send(Pack* pack) {
     return true;
 }
 
-void Ring::sendClock() {
-    //debug("Clocking out");
-    clockTick();
-    delay(RING_DELAY_CLOCK);
-}
-
-void Ring::send(int data) {
+void Ring::send(int data, int bits) {
     //debug("Send:", data);
-    for(int i=0; i < RING_DATA_BITS;) {
-        for(int j=0; j < RING_BUS_LENGTH && i < RING_DATA_BITS; j++) {
+    for(int i=0; i < bits;) {
+        for(int j=0; j < bus->length && i < bits; j++) {
             int bit = data & 1;
             data >>= 1;
             //debug("Write bit to bus[",j,"] =>", bit);
-            digitalWrite(bus[j], bit);
+            digitalWrite(bus->pins[j], bit);
             i++;
         }
         sendClock();
     }
 }
 
-
 bool Ring::receive() {
     // read additional meta info of message
-    int from = read();
-    int to = read();
-    int length = read();
+    int from = read(RING_ADDRESS_BITS);
+    int to = read(RING_ADDRESS_BITS);
+    int type = read(RING_PACK_TYPE_BITS);
+    int length = read(RING_LENGTH_BITS);
     
     // check if it's sent to us
     bool our = pack.isBroadcast(to) || pack.isAddressedBetween(to, address, multiple);
@@ -487,42 +518,52 @@ bool Ring::receive() {
         pack.from = from;
         pack.length = length;
     }
+    int j = 0; // analog pin
     for(int i=0; i<length; i++) {
-        int data = read();
-        if(our) {
-            // store if it's for us
-            pack.buffer[i] = data;
+        if(type == RING_PACKTYPE_DIGITAL) {
+            int data = read(RING_DATA_BITS);            
+            if(our) {
+                // store if it's for us
+                pack.buffer[i] = data;
+            }
+        } else if(type == RING_PACKTYPE_ANALOG) {
+            int data = analogRead(bus->pins_analog[j]);            
+            if(our) {
+                // store if it's for us
+                pack.buffer[i] = data;
+            }
+            j++;
+            if(j > bus->length_analog) {
+                j = 0;
+                clockWaiting();
+            }
+        } else {
+            error("Wrong type read:", type);
         }
     }
     
     return our;
 }
 
-void Ring::readClock() {
-    //debug("Waiting for clock...");
-    clockWaiting();
-    //debug("Clock ticked!!");
-}
-
-int Ring::read() {
+int Ring::read(int bits) {
     //debug("Reading start...");
     int data = 0;
-    for(int i=0; i < RING_DATA_BITS;) {
-        for(int j=0; j < RING_BUS_LENGTH && i < RING_DATA_BITS; j++) {
-            int bit = digitalRead(bus[j]);
+    for(int i=0; i < bits;) {
+        for(int j=0; j < bus->length && i < bits; j++) {
+            int bit = digitalRead(bus->pins[j]);
             //debug("Read bit on bus[",j,"] <=", bit);
             data = data | (bit << i);
             i++;
         }
-        if(i < RING_DATA_BITS) {
-            readClock();
+        if(i < bits) {
+            clockWaiting();
         }
     }
-    readClock();
+    clockWaiting();
     
     // sign
-    if(RING_DATA_SIGNED && data > (1<<RING_DATA_BITS)/2) {
-        data -= 1<<RING_DATA_BITS;
+    if(RING_DATA_SIGNED && data > (1<<bits)/2) {
+        data -= 1<<bits;
     }
     //debug("Read:", data);
     return data;
