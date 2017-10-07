@@ -190,6 +190,8 @@ public:
             Handler onTokenOwnedLoopHandler = RING_DEFAULT_HANDLER, 
             Handler onTokenWaitingLoopHandler = RING_DEFAULT_HANDLER
     );
+    
+    void start();
       
     bool send(Pack* pack);
     
@@ -339,6 +341,10 @@ int Ring::init(const bool master, const int prev, const int next,
     this->onClockWaitingLoopHandler = onClockWaitingLoopHandler;
     this->onTokenWaitingLoopHandler = onTokenWaitingLoopHandler;
     this->onTokenOwnedLoopHandler = onTokenOwnedLoopHandler;
+    
+}
+
+void Ring::start() {
     
     while(true) {
         //debug("...");
