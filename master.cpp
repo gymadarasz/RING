@@ -1,13 +1,14 @@
-#include "Ring.cpp"
+
 #include "Neuron.cpp"
 
 static Ring ring;
 
 void onMasterReceive(Pack* pack) {
-    test_nequ(
-            "Checking: Sender and recipient can not be same in master device.", 
-            pack->to, pack->from, 
-            "Master given a self addressed message.");
+    
+//    test_nequ(
+//            "Checking: Sender and recipient can not be same in master device.", 
+//            pack->to, pack->from.first, 
+//            "Master given a self addressed message.");
 
     debug("(f) MASTER RECEIVE:", pack);
 }
@@ -16,6 +17,7 @@ void onMasterReceive(Pack* pack) {
 int teste;
 
 void setup() {
+    debug("Master start..");
     teste = 0;
     
     const int bus_pins[] = {3, 4, 5}; 
@@ -31,9 +33,12 @@ void loop() {
     //ring.loop(tick);
     if(teste == 0) {
         int buffer[] = {124};
-        ring.send(ring.pack.make(0, 2, 1, buffer, RING_PACKTYPE_ANALOG));
+        Platoon senders;
+        senders.first = 0;
+        senders.length = 1;
+        ring.send(ring.pack.make(senders, 2, RING_PACKTYPE_ANALOG, 1, buffer));
         buffer[0] = 221;
-        ring.send(ring.pack.make(0, 4, 1, buffer, RING_PACKTYPE_ANALOG));
+        ring.send(ring.pack.make(senders, 4, RING_PACKTYPE_ANALOG, 1, buffer));
         teste = 1;
     }
     
