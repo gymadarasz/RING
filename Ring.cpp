@@ -85,7 +85,6 @@ public:
     Message messages[RING_PACK_MESSAGES_MAX];
     MessageList();
     void clear();
-    void put(Message message);
 };
 
 MessageList::MessageList() {
@@ -94,11 +93,6 @@ MessageList::MessageList() {
 
 void MessageList::clear() {
     length = -1;
-}
-
-void MessageList::put(Message message) {
-    messages[length] = message;
-    length++;
 }
 
 
