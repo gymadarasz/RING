@@ -3,7 +3,7 @@
 
 static Ring ring;
 
-void onMasterReceive(Pack* pack) {
+void onMasterReceive(Pack pack) {
     
 //    test_nequ(
 //            "Checking: Sender and recipient can not be same in master device.", 
@@ -37,10 +37,12 @@ void loop() {
         senders.length = 1;
         
         ring.pack.message.make(124);
-        ring.send(ring.pack.make(senders, ring.pack.message, 2, RING_PACKTYPE_ANALOG));
+        ring.pack.make(senders, ring.pack.message, 2, RING_PACKTYPE_ANALOG);
+        ring.send(ring.pack);
         
         ring.pack.message.make(221);
-        ring.send(ring.pack.make(senders, ring.pack.message, 4, RING_PACKTYPE_ANALOG));
+        ring.pack.make(senders, ring.pack.message, 4, RING_PACKTYPE_ANALOG);
+        ring.send(ring.pack);
         teste = 1;
     }
     

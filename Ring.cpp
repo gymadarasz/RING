@@ -20,7 +20,7 @@
 #define RING_DATA_VALUE_BITS 12 // or 10
 
 #define RING_QUEUE_LENGTH 3
-#define RING_BUFFER_LENGTH 1
+#define RING_BUFFER_LENGTH 10
 
 #define RING_DATA_SIGNED true
 #define RING_MASTER true
@@ -83,7 +83,7 @@ public:
     Message message;
     int to;
     int type;
-    Pack* make(
+    void make(
         Platoon from, Message message, 
         int to = RING_ADDR_BROADCAST, 
         int type = RING_PACKTYPE_DIGITAL
@@ -97,13 +97,12 @@ public:
     static bool isAddressedBetween(int to, Platoon address);
 };
 
-Pack* Pack::make(Platoon from, Message message, int to, int type) {
+void Pack::make(Platoon from, Message message, int to, int type) {
     this->from.first = from.first;
     this->from.length = from.length;
     this->to = to;
     this->type = type;
     this->message = message;
-    return this;
 }
 
 void Pack::copy(Pack* pack) {
@@ -135,16 +134,16 @@ bool Pack::isAddressedBetween(int to, Platoon address) {
 
 #ifdef RING_PACK_DEBUG
 
-void debug(const char* msg, Pack* pack);
+void debug(const char* msg, Pack pack);
 
-void debug(const char* msg, Pack* pack) {
+void debug(const char* msg, Pack pack) {
     debug(msg);
-    debug("from.first:", pack->from.first);
-    debug("from.length:", pack->from.length);
-    debug("to:", pack->to);
-    debug("type:", pack->type);
-    debug("message.length:", pack->message.length);    
-    debug("message.buffer[]:", pack->message.buffer, pack->message.length);
+    debug("from.first:", pack.from.first);
+    debug("from.length:", pack.from.length);
+    debug("to:", pack.to);
+    debug("type:", pack.type);
+    debug("message.length:", pack.message.length);    
+    debug("message.buffer[]:", pack.message.buffer, pack.message.length);
 }
 #endif
 
@@ -165,9 +164,9 @@ private:
     int current;
 public:
     Queue();
-    void push(Pack* pack);
-    Pack* top();
-    Pack* pop();
+    void push(Pack pack);
+    Pack top();
+    Pack pop();
     bool isEmpty();
     bool isFull();
 };
@@ -179,18 +178,18 @@ Queue::Queue() {
     current = -1;
 }
 
-void Queue::push(Pack* pack) {
+void Queue::push(Pack pack) {
     current++;
-    pack->copy(&packs[current]);
+    pack.copy(&packs[current]);
 }
 
-Pack* Queue::top() {
-    return &packs[current];
+Pack Queue::top() {
+    return packs[current];
 }
 
-Pack* Queue::pop() {
+Pack Queue::pop() {
     current--;
-    return &packs[current+1];
+    return packs[current+1];
 }
 
 bool Queue::isEmpty() {
@@ -207,7 +206,7 @@ bool Queue::isFull() {
 // ----------------------------- RING ------------------------------
 // -----------------------------------------------------------------
 
-typedef void (*Receiver)(Pack*);
+typedef void (*Receiver)(Pack);
 
 /**
  * Token Ring
@@ -227,7 +226,7 @@ public:
     
     void start();
       
-    bool send(Pack* pack);
+    bool send(Pack pack);
     
 protected:
     
@@ -254,7 +253,7 @@ protected:
     bool initialized;
     static Ring* that;
     
-    static void initReceiveHandler(Pack* pack);
+    static void initReceiveHandler(Pack pack);
     static void initTokenOwnedHandler();
 
     
@@ -460,7 +459,7 @@ bool Ring::receiveCheck() {
         // .. read pack stuff
         if(receive()) {
             //debug("Package received:", &pack);
-            this->onPackReceivedHandler(&pack);
+            this->onPackReceivedHandler(pack);
         }
         return true;
     }
@@ -471,7 +470,7 @@ bool Ring::listen() {
     if(tokenCheck()) {
         
         while(!queue.isEmpty()) {
-            if(queue.top()->isAddressedBetween(address)) {
+            if(queue.top().isAddressedBetween(address)) {
                 onPackReceivedHandler(queue.pop());
             } else {
                 send(queue.pop());
@@ -495,7 +494,7 @@ void Ring::sendClock() {
     delay(RING_DELAY_CLOCK);
 }
 
-bool Ring::send(Pack* pack) {
+bool Ring::send(Pack pack) {
     //debug("Package sending:", pack);
     if(queue.isFull()) {
         error("queue full", 1);
@@ -503,24 +502,24 @@ bool Ring::send(Pack* pack) {
     }
     
     if(tokenCheck()) {
-        send(pack->type, RING_DATA_TYPE_BITS);
-        send(pack->from.first, RING_ADDRESS_FIRST_BITS);
-        send(pack->from.length, RING_ADDRESS_LENGTH_BITS);
-        send(pack->to, RING_ADDRESS_FIRST_BITS);
-        send(pack->message.length, RING_DATA_LENGTH_BITS);
+        send(pack.type, RING_DATA_TYPE_BITS);
+        send(pack.from.first, RING_ADDRESS_FIRST_BITS);
+        send(pack.from.length, RING_ADDRESS_LENGTH_BITS);
+        send(pack.to, RING_ADDRESS_FIRST_BITS);
+        send(pack.message.length, RING_DATA_LENGTH_BITS);
         int j = 0; // analog pin
-        for(int i=0; i < pack->message.length; i++) {
-            if(pack->type == RING_PACKTYPE_DIGITAL) {
-                send(pack->message.buffer[i], RING_DATA_VALUE_BITS);
-            } else if(pack->type == RING_PACKTYPE_ANALOG) {
-                analogWrite(bus->pins_analog[j], pack->message.buffer[i]);
+        for(int i=0; i < pack.message.length; i++) {
+            if(pack.type == RING_PACKTYPE_DIGITAL) {
+                send(pack.message.buffer[i], RING_DATA_VALUE_BITS);
+            } else if(pack.type == RING_PACKTYPE_ANALOG) {
+                analogWrite(bus->pins_analog[j], pack.message.buffer[i]);
                 j++;
                 if(j > bus->length_analog) {
                     j = 0;
                     sendClock();
                 }
             } else {
-                error("Wrong pack type:", pack->type);
+                error("Wrong pack type:", pack.type);
             }
         }
         sendClock();
@@ -616,18 +615,19 @@ int Ring::read(int bits) {
 
 Ring* Ring::that;
 
-void Ring::initReceiveHandler(Pack* pack) {
+void Ring::initReceiveHandler(Pack pack) {
     if(!that->initialized) {
-        that->address.first = pack->message.buffer[0];
+        that->address.first = pack.message.buffer[0];
         //debug("Slave set the address:", that->address);
     }
-    that->length = pack->message.buffer[0];
+    that->length = pack.message.buffer[0];
 }
 
 void Ring::initTokenOwnedHandler() {
     if(!that->initialized) {
         that->pack.message.make(that->address.first+that->address.length);
-        that->send(that->pack.make(that->address, that->pack.message, RING_ADDR_BROADCAST, RING_PACKTYPE_DIGITAL));
+        that->pack.make(that->address, that->pack.message, RING_ADDR_BROADCAST, RING_PACKTYPE_DIGITAL);
+        that->send(that->pack);
         that->initialized = true;
     }
 }

@@ -3,7 +3,7 @@
 
 static Ring ring;
 
-void onSlaveReceive(Pack* pack) {
+void onSlaveReceive(Pack pack) {
 
 //    test_nequ(
 //            "Checking: Sender and recipient can not be same in slave device.", 
