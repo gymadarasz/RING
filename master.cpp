@@ -32,13 +32,15 @@ void setup() {
 void loop() {
     //ring.loop(tick);
     if(teste == 0) {
-        int buffer[] = {124};
         Platoon senders;
         senders.first = 0;
         senders.length = 1;
-        ring.send(ring.pack.make(senders, 2, RING_PACKTYPE_ANALOG, 1, buffer));
-        buffer[0] = 221;
-        ring.send(ring.pack.make(senders, 4, RING_PACKTYPE_ANALOG, 1, buffer));
+        
+        ring.pack.message.make(124);
+        ring.send(ring.pack.make(senders, ring.pack.message, 2, RING_PACKTYPE_ANALOG));
+        
+        ring.pack.message.make(221);
+        ring.send(ring.pack.make(senders, ring.pack.message, 4, RING_PACKTYPE_ANALOG));
         teste = 1;
     }
     

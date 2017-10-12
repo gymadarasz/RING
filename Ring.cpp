@@ -58,16 +58,35 @@ typedef struct {
 // ------------------------- PACK -------------------------
 // --------------------------------------------------------
 
+class Message {
+public:
+    int length;
+    int buffer[RING_BUFFER_LENGTH];
+    void make(int length = 0, int* buffer = NULL);
+};
+
+void Message::make(int length, int* buffer) {
+    if(NULL == buffer) { // only one data sending?
+        this->length = 1;
+        this->buffer[0] = length;
+    } else {
+        this->length = length;
+        for(int i=0; i<this->length; i++) {
+            this->buffer[i] = buffer[i];
+        }
+    }
+}
+
 class Pack {
 public:
     Platoon from;
+    Message message;
     int to;
     int type;
-    int length;
-    int* buffer;
     Pack* make(
-        Platoon from, int to = RING_ADDR_BROADCAST, 
-        int type = RING_PACKTYPE_DIGITAL, int length = 0, int* buffer = NULL 
+        Platoon from, Message message, 
+        int to = RING_ADDR_BROADCAST, 
+        int type = RING_PACKTYPE_DIGITAL
     );
     void copy(Pack* pack);
     bool isBroadcast();
@@ -78,18 +97,12 @@ public:
     static bool isAddressedBetween(int to, Platoon address);
 };
 
-Pack* Pack::make(Platoon from, int to, int type, int length, int* buffer) {
+Pack* Pack::make(Platoon from, Message message, int to, int type) {
     this->from.first = from.first;
     this->from.length = from.length;
     this->to = to;
     this->type = type;
-    if(NULL == buffer) { // only one data sending?
-        this->length = 1;
-        this->buffer[0] = length;
-    } else {
-        this->length = length;
-        this->buffer = buffer;
-    }
+    this->message = message;
     return this;
 }
 
@@ -98,9 +111,9 @@ void Pack::copy(Pack* pack) {
     pack->from.length = from.length;
     pack->to = to;
     pack->type = type;
-    pack->length = length;
-    for(int i=0; i < length; i++) {
-        pack->buffer[i] = buffer[i];
+    pack->message.length = message.length;
+    for(int i=0; i < message.length; i++) {
+        pack->message.buffer[i] = message.buffer[i];
     }
 }
 
@@ -129,8 +142,9 @@ void debug(const char* msg, Pack* pack) {
     debug("from.first:", pack->from.first);
     debug("from.length:", pack->from.length);
     debug("to:", pack->to);
-    debug("length:", pack->length);    
-    debug("buffer[]:", pack->buffer, pack->length);
+    debug("type:", pack->type);
+    debug("message.length:", pack->message.length);    
+    debug("message.buffer[]:", pack->message.buffer, pack->message.length);
 }
 #endif
 
@@ -147,7 +161,7 @@ public:
 class Queue {
 private:
     Pack packs[RING_QUEUE_LENGTH];
-    int buffers[RING_QUEUE_LENGTH][RING_BUFFER_LENGTH];
+    //int buffers[RING_QUEUE_LENGTH][RING_BUFFER_LENGTH];
     int current;
 public:
     Queue();
@@ -159,9 +173,9 @@ public:
 };
 
 Queue::Queue() {
-    for(int i=0; i < RING_QUEUE_LENGTH; i++) {
-        packs[i].buffer = buffers[i];
-    }
+//    for(int i=0; i < RING_QUEUE_LENGTH; i++) {
+//        packs[i].message.buffer = buffers[i];
+//    }
     current = -1;
 }
 
@@ -281,7 +295,7 @@ protected:
     // ----------------------- PACK ---------------------------
     // --------------------------------------------------------
     
-    int buffer[RING_BUFFER_LENGTH];
+//    int buffer[RING_BUFFER_LENGTH];
     
     
     // --------------------------------------------------------
@@ -327,7 +341,7 @@ int Ring::init(const bool master, const int prev, const int next,
     this->address.length = multiple;
     
     that = this;
-    pack.buffer = buffer;
+//    pack.message.buffer = buffer;
     initialized = master;
     
     clockReset(HIGH);
@@ -493,13 +507,13 @@ bool Ring::send(Pack* pack) {
         send(pack->from.first, RING_ADDRESS_FIRST_BITS);
         send(pack->from.length, RING_ADDRESS_LENGTH_BITS);
         send(pack->to, RING_ADDRESS_FIRST_BITS);
-        send(pack->length, RING_DATA_LENGTH_BITS);
+        send(pack->message.length, RING_DATA_LENGTH_BITS);
         int j = 0; // analog pin
-        for(int i=0; i < pack->length; i++) {
+        for(int i=0; i < pack->message.length; i++) {
             if(pack->type == RING_PACKTYPE_DIGITAL) {
-                send(pack->buffer[i], RING_DATA_VALUE_BITS);
+                send(pack->message.buffer[i], RING_DATA_VALUE_BITS);
             } else if(pack->type == RING_PACKTYPE_ANALOG) {
-                analogWrite(bus->pins_analog[j], pack->buffer[i]);
+                analogWrite(bus->pins_analog[j], pack->message.buffer[i]);
                 j++;
                 if(j > bus->length_analog) {
                     j = 0;
@@ -547,7 +561,7 @@ bool Ring::receive() {
     if(our) {
         pack.to = to;
         pack.from = from;
-        pack.length = length;
+        pack.message.length = length;
     }
     int j = 0; // analog pin
     for(int i=0; i<length; i++) {
@@ -555,13 +569,13 @@ bool Ring::receive() {
             int data = read(RING_DATA_VALUE_BITS);            
             if(our) {
                 // store if it's for us
-                pack.buffer[i] = data;
+                pack.message.buffer[i] = data;
             }
         } else if(type == RING_PACKTYPE_ANALOG) {
             int data = analogRead(bus->pins_analog[j]);            
             if(our) {
                 // store if it's for us
-                pack.buffer[i] = data;
+                pack.message.buffer[i] = data;
             }
             j++;
             if(j > bus->length_analog) {
@@ -604,15 +618,16 @@ Ring* Ring::that;
 
 void Ring::initReceiveHandler(Pack* pack) {
     if(!that->initialized) {
-        that->address.first = pack->buffer[0];
+        that->address.first = pack->message.buffer[0];
         //debug("Slave set the address:", that->address);
     }
-    that->length = pack->buffer[0];
+    that->length = pack->message.buffer[0];
 }
 
 void Ring::initTokenOwnedHandler() {
     if(!that->initialized) {
-        that->send(that->pack.make(that->address, RING_ADDR_BROADCAST, RING_PACKTYPE_DIGITAL, that->address.first+that->address.length));
+        that->pack.message.make(that->address.first+that->address.length);
+        that->send(that->pack.make(that->address, that->pack.message, RING_ADDR_BROADCAST, RING_PACKTYPE_DIGITAL));
         that->initialized = true;
     }
 }
