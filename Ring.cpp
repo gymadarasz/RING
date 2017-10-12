@@ -21,6 +21,7 @@
 
 #define RING_QUEUE_LENGTH 3
 #define RING_BUFFER_LENGTH 10
+#define RING_PACK_MESSAGES_MAX 10
 
 #define RING_DATA_SIGNED true
 #define RING_MASTER true
@@ -77,14 +78,41 @@ void Message::make(int length, int* buffer) {
     }
 }
 
+// -------------
+
+class MessageList {
+public:
+    int length;
+    Message messages[RING_PACK_MESSAGES_MAX];
+    MessageList();
+    void clear();
+    void put(Message message);
+};
+
+MessageList::MessageList() {
+    clear();
+}
+
+void MessageList::clear() {
+    length = -1;
+}
+
+void MessageList::put(Message message) {
+    messages[length] = message;
+    length++;
+}
+
+
+// -------- 
+
 class Pack {
 public:
     Platoon from;
-    Message message;
+    MessageList messageList;
     int to;
     int type;
     void make(
-        Platoon from, Message message, 
+        Platoon from, MessageList messageList, 
         int to = RING_ADDR_BROADCAST, 
         int type = RING_PACKTYPE_DIGITAL
     );
@@ -97,12 +125,12 @@ public:
     static bool isAddressedBetween(int to, Platoon address);
 };
 
-void Pack::make(Platoon from, Message message, int to, int type) {
+void Pack::make(Platoon from, MessageList messageList, int to, int type) {
     this->from.first = from.first;
     this->from.length = from.length;
     this->to = to;
     this->type = type;
-    this->message = message;
+    this->messageList = messageList;
 }
 
 void Pack::copy(Pack* pack) {
@@ -110,9 +138,12 @@ void Pack::copy(Pack* pack) {
     pack->from.length = from.length;
     pack->to = to;
     pack->type = type;
-    pack->message.length = message.length;
-    for(int i=0; i < message.length; i++) {
-        pack->message.buffer[i] = message.buffer[i];
+    pack->messageList.length = messageList.length;
+    for(int j=0; j < pack->messageList.length; j++) {
+        pack->messageList.messages[j].length = messageList.messages[j].length;
+        for(int i=0; i < messageList.messages[j].length; i++) {
+            pack->messageList.messages[j].buffer[i] = messageList.messages[j].buffer[i];
+        }
     }
 }
 
@@ -142,15 +173,13 @@ void debug(const char* msg, Pack pack) {
     debug("from.length:", pack.from.length);
     debug("to:", pack.to);
     debug("type:", pack.type);
-    debug("message.length:", pack.message.length);    
-    debug("message.buffer[]:", pack.message.buffer, pack.message.length);
+    debug("messageList.length:", pack.messageList.length);    
+    for(int i=0; i < pack.messageList.length; i++) {
+        debug("messageList.messages[].buffer[]:", pack.messageList.messages[i].buffer, pack.messageList.messages[i].length);
+    }
 }
 #endif
 
-class MultiPack {
-public:
-    
-};
 
 // --------------------------------------------------------
 // ------------------------ QUEUE -------------------------
@@ -506,20 +535,25 @@ bool Ring::send(Pack pack) {
         send(pack.from.first, RING_ADDRESS_FIRST_BITS);
         send(pack.from.length, RING_ADDRESS_LENGTH_BITS);
         send(pack.to, RING_ADDRESS_FIRST_BITS);
-        send(pack.message.length, RING_DATA_LENGTH_BITS);
-        int j = 0; // analog pin
-        for(int i=0; i < pack.message.length; i++) {
-            if(pack.type == RING_PACKTYPE_DIGITAL) {
-                send(pack.message.buffer[i], RING_DATA_VALUE_BITS);
-            } else if(pack.type == RING_PACKTYPE_ANALOG) {
-                analogWrite(bus->pins_analog[j], pack.message.buffer[i]);
-                j++;
-                if(j > bus->length_analog) {
-                    j = 0;
-                    sendClock();
+        if(pack.from.length != pack.messageList.length) {
+            error("Ambiguous message length", 5);
+        }
+        for(int k=0; k < pack.messageList.length; k++) {
+            send(pack.messageList.messages[k].length, RING_DATA_LENGTH_BITS);
+            int j = 0; // analog pin
+            for(int i=0; i < pack.messageList.messages[k].length; i++) {
+                if(pack.type == RING_PACKTYPE_DIGITAL) {
+                    send(pack.messageList.messages[k].buffer[i], RING_DATA_VALUE_BITS);
+                } else if(pack.type == RING_PACKTYPE_ANALOG) {
+                    analogWrite(bus->pins_analog[j], pack.messageList.messages[k].buffer[i]);
+                    j++;
+                    if(j > bus->length_analog) {
+                        j = 0;
+                        sendClock();
+                    }
+                } else {
+                    error("Wrong pack type:", pack.type);
                 }
-            } else {
-                error("Wrong pack type:", pack.type);
             }
         }
         sendClock();
@@ -552,37 +586,44 @@ bool Ring::receive() {
     from.first = read(RING_ADDRESS_FIRST_BITS);
     from.length = read(RING_ADDRESS_LENGTH_BITS);
     int to = read(RING_ADDRESS_FIRST_BITS);
-    int length = read(RING_DATA_LENGTH_BITS);
     
     // check if it's sent to us
     bool our = pack.isBroadcast(to) || pack.isAddressedBetween(to, address);
-    // read message contents
+    
     if(our) {
         pack.to = to;
-        pack.from = from;
-        pack.message.length = length;
+        pack.from.first = from.first;
+        pack.from.length = from.length;
     }
-    int j = 0; // analog pin
-    for(int i=0; i<length; i++) {
-        if(type == RING_PACKTYPE_DIGITAL) {
-            int data = read(RING_DATA_VALUE_BITS);            
-            if(our) {
-                // store if it's for us
-                pack.message.buffer[i] = data;
+    
+    for(int k=0; k < from.length; k++) {
+        int length = read(RING_DATA_LENGTH_BITS);
+        // read message contents
+        if(our) {
+            pack.messageList.messages[k].length = length;
+        }
+        int j = 0; // analog pin
+        for(int i=0; i<length; i++) {
+            if(type == RING_PACKTYPE_DIGITAL) {
+                int data = read(RING_DATA_VALUE_BITS);            
+                if(our) {
+                    // store if it's for us
+                    pack.messageList.messages[k].buffer[i] = data;
+                }
+            } else if(type == RING_PACKTYPE_ANALOG) {
+                int data = analogRead(bus->pins_analog[j]);            
+                if(our) {
+                    // store if it's for us
+                    pack.messageList.messages[k].buffer[i] = data;
+                }
+                j++;
+                if(j > bus->length_analog) {
+                    j = 0;
+                    clockWaiting();
+                }
+            } else {
+                error("Wrong type read:", type);
             }
-        } else if(type == RING_PACKTYPE_ANALOG) {
-            int data = analogRead(bus->pins_analog[j]);            
-            if(our) {
-                // store if it's for us
-                pack.message.buffer[i] = data;
-            }
-            j++;
-            if(j > bus->length_analog) {
-                j = 0;
-                clockWaiting();
-            }
-        } else {
-            error("Wrong type read:", type);
         }
     }
     
@@ -617,16 +658,19 @@ Ring* Ring::that;
 
 void Ring::initReceiveHandler(Pack pack) {
     if(!that->initialized) {
-        that->address.first = pack.message.buffer[0];
+        that->address.first = pack.messageList.messages[0].buffer[0];
         //debug("Slave set the address:", that->address);
     }
-    that->length = pack.message.buffer[0];
+    that->length = pack.messageList.messages[0].buffer[0];
 }
 
 void Ring::initTokenOwnedHandler() {
     if(!that->initialized) {
-        that->pack.message.make(that->address.first+that->address.length);
-        that->pack.make(that->address, that->pack.message, RING_ADDR_BROADCAST, RING_PACKTYPE_DIGITAL);
+        that->pack.from.first = that->address.first;
+        that->pack.from.length = 1;
+        that->pack.messageList.length = 1;
+        that->pack.messageList.messages[0].make(that->address.first+that->address.length);
+        that->pack.make(that->pack.from, that->pack.messageList, RING_ADDR_BROADCAST, RING_PACKTYPE_DIGITAL);
         that->send(that->pack);
         that->initialized = true;
     }

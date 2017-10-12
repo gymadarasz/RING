@@ -36,12 +36,14 @@ void loop() {
         senders.first = 0;
         senders.length = 1;
         
-        ring.pack.message.make(124);
-        ring.pack.make(senders, ring.pack.message, 2, RING_PACKTYPE_ANALOG);
+        ring.pack.messageList.length = 1;
+        ring.pack.messageList.messages[0].make(124);
+        ring.pack.make(senders, ring.pack.messageList, 2, RING_PACKTYPE_ANALOG);
         ring.send(ring.pack);
         
-        ring.pack.message.make(221);
-        ring.pack.make(senders, ring.pack.message, 4, RING_PACKTYPE_ANALOG);
+        ring.pack.messageList.length = 1;
+        ring.pack.messageList.messages[0].make(221);
+        ring.pack.make(senders, ring.pack.messageList, 4, RING_PACKTYPE_ANALOG);
         ring.send(ring.pack);
         teste = 1;
     }
