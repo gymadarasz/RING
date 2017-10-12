@@ -4,7 +4,7 @@
 #define NEURON_VERSION 0x0001
 
 #define NEURON_INPUTS_MAX 256   // maximum input per neuron
-#define NEURONS_MAX 8           // maximum neuron per block
+#define NEURON_LIST_MAX 8           // maximum neuron per block
 
 // TODO: normalize for analog ADC/DAC I/O values (10 bits => value[0..1023])
 #define NEURON_NORMALIZE_BITS 10 // ADC/DAC data length
@@ -33,7 +33,7 @@ public:
     int address;
     
     Platoon inputs;
-    int* weights;   // NEURON_VALUE_MAX - 10 bits integer, max value: [0..1023] for ADC/DAC I/O
+    int weights[NEURON_INPUTS_MAX];   // NEURON_VALUE_MAX - 10 bits integer, max value: [0..1023] for ADC/DAC I/O
     
     // Activation function parameters
     int bias;
@@ -46,7 +46,7 @@ public:
     int counter;
     int output;     // NEURON_VALUE_MAX - 10 bits integer, max value: [0..1023] for ADC/DAC I/O
     
-    void init(int address, int* weights, int bias = (NEURON_VALUE_MAX-NEURON_VALUE_MIN) / 2, int leak = 0, int momentum = 0);
+    void init(int address, int bias = (NEURON_VALUE_MAX-NEURON_VALUE_MIN) / 2, int leak = 0, int momentum = 0);
     void setInputs(Platoon inputs);
     void randomize(Fraction chance);
     void randomize();
@@ -56,9 +56,8 @@ public:
 };
 
 
-void Neuron::init(int address, int* weights, int bias, int leak, int momentum) {
+void Neuron::init(int address, int bias, int leak, int momentum) {
     this->address = address;
-    this->weights = weights;
     this->bias = bias;
     this->leak = leak;
     this->momentum = momentum;
@@ -120,13 +119,31 @@ void Neuron::activate() {
     
 }
 
+//---------------
+
+class NeuronList {
+public:
+    int length;
+    Neuron neurons[NEURON_LIST_MAX];
+    NeuronList();
+};
+
+NeuronList::NeuronList() {
+    length = -1;
+}
+
+//------------
+
 
 class Block: public Ring {
 public:
     static Block* that;
     
-    static Neuron neurons[NEURONS_MAX];
-    static int buffers[NEURONS_MAX][NEURON_INPUTS_MAX];
+    NeuronList neuronList;
+    
+    int counter;
+    
+    Pack packOut;
     
     void init(
         const bool master, const int prev, const int next, const int clock, 
@@ -136,12 +153,10 @@ public:
         Handler onTokenWaitingLoopHandler = RING_DEFAULT_HANDLER
     );
     void setInputs(Platoon inputs);
-    static void onPackReceiveHandler(Pack* pack);
+    static void onPackReceiveHandler(Pack pack);
 };
 
 Block* Block::that;
-Neuron Block::neurons[NEURONS_MAX];
-int Block::buffers[NEURONS_MAX][NEURON_INPUTS_MAX];
 
 void Block::init(
     const bool master, const int prev, const int next, const int clock, 
@@ -156,15 +171,54 @@ void Block::init(
         onClockWaitingLoopHandler, onTokenOwnedLoopHandler, onTokenWaitingLoopHandler);
     
     // TODO randomSeed
+    counter = neuronList.length = multiple;
     for(int i=0; i < multiple; i++) {
-        neurons[i].init(address.first+i, buffers[i]);
+        neuronList.neurons[i].init(address.first+i);
     }
+    
+    packOut.from.first = address.first;
+    packOut.from.length = address.length;
+    packOut.to = RING_ADDR_BROADCAST;
+    packOut.type = RING_PACKTYPE_ANALOG;
     
 }
 
-void Block::onPackReceiveHandler(Pack* pack) {
+void Block::onPackReceiveHandler(Pack pack) {
     // Todo: use 'that' as 'this' self
-    
+    if(pack.from.length != pack.messageList.length) {
+        error("Ambiguous incoming package length.", 1);
+    }
+    // goes through each incoming message
+    for(int i = 0; i < pack.from.length; i++) {
+        // goes through each neuron in this block
+        for(int j = 0; j < that->neuronList.length; j++) {
+            int packFrom = pack.from.first+i;
+            // if current message for current neuron..
+            if(
+                    packFrom >= that->neuronList.neurons[j].inputs.first && 
+                    packFrom < 
+                        that->neuronList.neurons[j].inputs.first +
+                        that->neuronList.neurons[j].inputs.length
+            ) {
+                // collect to SUM
+                bool activated = that->neuronList.neurons[j].collect(
+                    packFrom, 
+                    pack.messageList.messages[j].buffer[0]
+                );
+                // send output if neuron is activated
+                if(activated) {
+                    that->packOut.messageList.length = 1;
+                    that->packOut.messageList.messages[j].buffer[0] = 
+                            that->neuronList.neurons[j].output;
+                    that->counter--;
+                    if(that->counter == 0) {
+                        that->counter = that->neuronList.length;
+                        that->send(that->packOut);
+                    }
+                }
+            }
+        }
+    }
 }
 
 
