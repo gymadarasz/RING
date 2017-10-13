@@ -17,7 +17,8 @@
 #define BASE_CMD_GET_STATE 2
 #define BASE_CMD_RANDOM_SEED 3
 #define BASE_CMD_RANDOM_CHANGE 4
-#define BASE_CMD_UNDO 5
+#define BASE_CMD_STORE 5
+#define BASE_CMD_RESTORE 6
 
 #define BASE_MSG_STATE 2
 
@@ -31,7 +32,7 @@ class Neuron {
 public:
     // Connection descriptors
     int address;
-    
+    int begin; // first non input neuron address
     Platoon inputs;
     int weights[NEURON_INPUTS_MAX];   // NEURON_VALUE_MAX - 10 bits integer, max value: [0..1023] for ADC/DAC I/O
     
@@ -46,18 +47,22 @@ public:
     int counter;
     int output;     // NEURON_VALUE_MAX - 10 bits integer, max value: [0..1023] for ADC/DAC I/O
     
-    void init(int address, int bias = (NEURON_VALUE_MAX-NEURON_VALUE_MIN) / 2, int leak = 0, int momentum = 0);
-    void setInputs(Platoon inputs);
+    void init(int address, int begin, Platoon inputs = {-1, 0}, int bias = (NEURON_VALUE_MAX-NEURON_VALUE_MIN) / 2, int leak = 0, int momentum = 0);
     void randomize(Fraction chance);
     void randomize();
     void clear();
     bool collect(int from, int value);
     void activate();
+    int exportState(int* buffer);
+    void importState(int* buffer);
 };
 
 
-void Neuron::init(int address, int bias, int leak, int momentum) {
+void Neuron::init(int address, int begin, Platoon inputs, int bias, int leak, int momentum) {
     this->address = address;
+    this->begin = begin;
+    this->inputs.first = inputs.first;
+    this->inputs.length = inputs.length;
     this->bias = bias;
     this->leak = leak;
     this->momentum = momentum;
@@ -65,10 +70,6 @@ void Neuron::init(int address, int bias, int leak, int momentum) {
     randomize();
 }
 
-void Neuron::setInputs(Platoon inputs) {
-    this->inputs.first = inputs.first;
-    this->inputs.length = inputs.length;
-}
 
 void Neuron::randomize(Fraction chance) {
     if(random(1, chance.denominator) <= chance.numerator) 
@@ -77,6 +78,14 @@ void Neuron::randomize(Fraction chance) {
         bias = random(NEURON_VALUE_MIN, NEURON_VALUE_MAX * (inputs.length + (momentum ? 1 : 0)));
     if(random(1, chance.denominator) <= chance.numerator) 
         leak = random(NEURON_VALUE_MIN, NEURON_NORMALIZE_BITS);
+    if(random(1, chance.denominator) <= chance.numerator) {
+        do {
+            inputs.first = random(0, address-1);
+            inputs.length = random(0, address-begin) + 1;
+        } while(
+                inputs.first + inputs.length <= address
+        );
+    }
     for(int i=0; i < inputs.length; i++) {
         if(random(1, chance.denominator) <= chance.numerator) 
             weights[i] = random(NEURON_VALUE_MIN, NEURON_VALUE_MAX);
@@ -119,17 +128,74 @@ void Neuron::activate() {
     
 }
 
+int Neuron::exportState(int* buffer) {
+    int size = 0;
+    
+    buffer[size] = address;         size += sizeof (address);
+    buffer[size] = begin;           size += sizeof (begin);
+    buffer[size] = bias;            size += sizeof (bias);
+    buffer[size] = counter;         size += sizeof (counter);
+    buffer[size] = inputs.first;    size += sizeof (inputs.first);
+    buffer[size] = inputs.length;   size += sizeof (inputs.length);
+    buffer[size] = leak;            size += sizeof (leak);
+    buffer[size] = momentum;        size += sizeof (momentum);
+    buffer[size] = output;          size += sizeof (output);
+    buffer[size] = previous;        size += sizeof (previous);
+    buffer[size] = sum;             size += sizeof (sum);
+    
+    for (int j = 0; j < inputs.length; j++) {
+        buffer[size] = weights[j]; size += sizeof (weights[j]);
+    }
+    
+    return size;
+}
+
+void Neuron::importState(int* buffer) {
+    int i = 0;
+    
+    address         = buffer[i]; i += sizeof(address);
+    begin           = buffer[i]; i += sizeof(begin);
+    bias            = buffer[i]; i += sizeof(bias);
+    counter         = buffer[i]; i += sizeof(counter);
+    inputs.first    = buffer[i]; i += sizeof(inputs.first);
+    inputs.length   = buffer[i]; i += sizeof(inputs.length);
+    leak            = buffer[i]; i += sizeof(leak);
+    momentum        = buffer[i]; i += sizeof(momentum);
+    output          = buffer[i]; i += sizeof(output);
+    previous        = buffer[i]; i += sizeof(previous);
+    sum             = buffer[i]; i += sizeof(sum);
+    
+    for (int j = 0; j < inputs.length; j++) {
+        weights[j] = buffer[i]; i += sizeof(weights[j]);
+    }   
+}
+
 //---------------
 
 class NeuronList {
 public:
     int length;
     Neuron neurons[NEURON_LIST_MAX];
+    int stack[NEURON_LIST_MAX][sizeof(Neuron)];
     NeuronList();
+    void store();
+    void restore();
 };
 
 NeuronList::NeuronList() {
     length = -1;
+}
+
+void NeuronList::store() {
+    for(int i = 0; i < length; i++) {
+        neurons[i].exportState(stack[i]);
+    }
+}
+
+void NeuronList::restore() {
+    for(int i = 0; i < length; i++) {
+        neurons[i].importState(stack[i]);
+    }
 }
 
 //------------
@@ -144,15 +210,15 @@ public:
     int counter;
     
     Pack packOut;
+    Pack packResp;
     
     void init(
         const bool master, const int prev, const int next, const int clock, 
-        const Bus bus, const int multiple = 1, 
+        const Bus bus, const int begin, const int multiple = 1, 
         Handler onClockWaitingLoopHandler = RING_DEFAULT_HANDLER,
         Handler onTokenOwnedLoopHandler = RING_DEFAULT_HANDLER, 
         Handler onTokenWaitingLoopHandler = RING_DEFAULT_HANDLER
     );
-    void setInputs(Platoon inputs);
     static void onPackReceiveHandler(Pack pack);
 };
 
@@ -160,7 +226,7 @@ Block* Block::that;
 
 void Block::init(
     const bool master, const int prev, const int next, const int clock, 
-    const Bus bus, const int multiple, 
+    const Bus bus, const int begin, const int multiple, 
     Handler onClockWaitingLoopHandler,
     Handler onTokenOwnedLoopHandler, 
     Handler onTokenWaitingLoopHandler
@@ -173,13 +239,8 @@ void Block::init(
     // TODO randomSeed
     counter = neuronList.length = multiple;
     for(int i=0; i < multiple; i++) {
-        neuronList.neurons[i].init(address.first+i);
+        neuronList.neurons[i].init(address.first+i, begin);
     }
-    
-    packOut.from.first = address.first;
-    packOut.from.length = address.length;
-    packOut.to = RING_ADDR_BROADCAST;
-    packOut.type = RING_PACKTYPE_ANALOG;
     
 }
 
@@ -188,32 +249,88 @@ void Block::onPackReceiveHandler(Pack pack) {
     if(pack.from.length != pack.messageList.length) {
         error("Ambiguous incoming package length.", 1);
     }
-    // goes through each incoming message
-    for(int i = 0; i < pack.from.length; i++) {
-        // goes through each neuron in this block
-        for(int j = 0; j < that->neuronList.length; j++) {
-            int packFrom = pack.from.first+i;
-            // if current message for current neuron..
-            if(
-                    packFrom >= that->neuronList.neurons[j].inputs.first && 
-                    packFrom < 
-                        that->neuronList.neurons[j].inputs.first +
-                        that->neuronList.neurons[j].inputs.length
-            ) {
-                // collect to SUM
-                bool activated = that->neuronList.neurons[j].collect(
-                    packFrom, 
-                    pack.messageList.messages[j].buffer[0]
-                );
-                // send output if neuron is activated
-                if(activated) {
-                    that->packOut.messageList.length = 1;
-                    that->packOut.messageList.messages[j].buffer[0] = 
-                            that->neuronList.neurons[j].output;
-                    that->counter--;
-                    if(that->counter == 0) {
-                        that->counter = that->neuronList.length;
-                        that->send(that->packOut);
+    
+    // if message came from BASE and the neuron in this block.. (or BC)
+    if(
+        pack.from.first == BASE_ADDRESS
+    ) {
+        // handle base commands
+        if(
+            pack.to >= that->neuronList.neurons[0].address &&
+            (pack.to < that->neuronList.neurons[0].address + that->neuronList.length)
+        ) {
+            if(pack.messageList.messages[0].buffer[0] == BASE_CMD_GET_STATE) {
+                that->packResp.messageList.messages[0].buffer[0] = BASE_MSG_STATE;
+                that->packResp.messageList.messages[0].length = 
+                    that->neuronList.neurons[pack.to - that->neuronList.neurons[0].address]
+                        .exportState(
+                            &that->packResp.messageList.messages[0].buffer[1]
+                        );
+            
+                that->packResp.from.first = pack.to;
+                that->packResp.from.length = 1;
+                that->packResp.to = BASE_ADDRESS;
+                that->packResp.type = RING_PACKTYPE_DIGITAL;
+                that->packResp.messageList.length = 1;
+                
+                that->send(that->packResp);
+            } else if(pack.messageList.messages[0].buffer[0] == BASE_CMD_SET_STATE) {
+                that->neuronList.neurons[pack.to - that->neuronList.neurons[0].address]
+                    .importState(
+                        &pack.messageList.messages[0].buffer[1]
+                    );
+            } else if(pack.messageList.messages[0].buffer[0] == BASE_CMD_RANDOM_SEED) {
+                randomSeed(pack.messageList.messages[0].buffer[1]);
+            } else {
+                error("Unknown base command.", 1);
+            }
+        } else if(pack.to == RING_ADDR_BROADCAST) {
+            if(pack.messageList.messages[0].buffer[0] == BASE_CMD_RANDOM_CHANGE) {
+                Fraction chance;
+                chance.denominator = pack.messageList.messages[0].buffer[1];
+                chance.numerator = pack.messageList.messages[0].buffer[2];
+                that->neuronList.neurons[pack.to - that->neuronList.neurons[0].address]
+                    .randomize(chance);
+            } else if(pack.messageList.messages[0].buffer[0] == BASE_CMD_STORE) {
+                that->neuronList.store();
+            } else if(pack.messageList.messages[0].buffer[0] == BASE_CMD_RESTORE) {
+                that->neuronList.restore();
+            } else {
+                error("Unknown base command. (BC)", 2);
+            }
+        }
+    } else {    
+        // goes through each incoming message
+        for(int i = 0; i < pack.from.length; i++) {
+            // goes through each neuron in this block
+            for(int j = 0; j < that->neuronList.length; j++) {
+                int packFrom = pack.from.first+i;
+                // if current message for current neuron..
+                if(
+                        packFrom >= that->neuronList.neurons[j].inputs.first && 
+                        packFrom < 
+                            that->neuronList.neurons[j].inputs.first +
+                            that->neuronList.neurons[j].inputs.length
+                ) {
+                    // collect to SUM
+                    bool activated = that->neuronList.neurons[j].collect(
+                        packFrom, 
+                        pack.messageList.messages[j].buffer[0]
+                    );
+                    // send output if neuron is activated
+                    if(activated) {
+                        that->packOut.messageList.length = 1;
+                        that->packOut.messageList.messages[j].buffer[0] = 
+                                that->neuronList.neurons[j].output;
+                        that->counter--;
+                        if(that->counter == 0) {                    
+                            that->packOut.from.first = that->address.first;
+                            that->packOut.from.length = that->address.length;
+                            that->packOut.to = RING_ADDR_BROADCAST;
+                            that->packOut.type = RING_PACKTYPE_ANALOG;
+                            that->send(that->packOut);
+                            that->counter = that->neuronList.length;
+                        }
                     }
                 }
             }
