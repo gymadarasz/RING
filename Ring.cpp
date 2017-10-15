@@ -7,7 +7,7 @@
 #define RING_VERSION 0x0001
 
 #define RING_DELAY_INIT 5
-#define RING_DELAY_CLOCK 2
+#define RING_DELAY_CLOCK 3
 
 #define RING_PACKTYPE_DIGITAL 0
 #define RING_PACKTYPE_ANALOG 1
@@ -21,6 +21,7 @@
 #define RING_QUEUE_LENGTH 3
 #define RING_BUFFER_LENGTH 10
 #define RING_PACK_MESSAGES_MAX 10
+#define RING_BUS_LENGTH_MAX 10
 
 #define RING_DATA_SIGNED true
 #define RING_MASTER true
@@ -47,11 +48,14 @@ Platoon::Platoon(int first, int length) {
 // --------------------------------------------------------
 
 typedef struct {
-    const int length;
-    const int* pins;
-    const int length_analog;
-    const int* pins_analog;
+    int length;
+    int pins[RING_BUS_LENGTH_MAX];
 } Bus;
+
+typedef struct {
+    Bus digital;
+    Bus analog;
+} BusDA;
 
 
 // --------------------------------------------------------
@@ -238,9 +242,9 @@ public:
     
     Pack pack;
     
-    int init(const bool master, const int prev, const int next, const int clock, 
-            const Bus bus, Receiver onPackReceivedHandler, 
-            const int multiple = 1, 
+    int init(bool master, int prev, int next, int clock, 
+            BusDA bus, Receiver onPackReceivedHandler, 
+            int multiple = 1, 
             Handler onClockWaitingLoopHandler = RING_DEFAULT_HANDLER,
             Handler onTokenOwnedLoopHandler = RING_DEFAULT_HANDLER, 
             Handler onTokenWaitingLoopHandler = RING_DEFAULT_HANDLER
@@ -256,9 +260,10 @@ protected:
     // ------------------------- BUS --------------------------
     // --------------------------------------------------------
     
-    const Bus* bus;
+    BusDA bus;
     
     void busReset(int level);
+    void static busCopy(int* busFrom, int* busTo);
     
     
     // --------------------------------------------------------
@@ -273,7 +278,7 @@ protected:
     // --------------------------------------------------------
     
     bool initialized;
-    static Ring* that;
+    static Ring* ring;
     
     static void initReceiveHandler(Pack pack);
     static void initTokenOwnedHandler();
@@ -349,19 +354,21 @@ protected:
 // -----------------------------------------------------------------
 
 
-int Ring::init(const bool master, const int prev, const int next, 
-        const int clock, const Bus bus, Receiver onPackReceivedHandler, 
-        const int multiple, Handler onClockWaitingLoopHandler, 
+int Ring::init(bool master, int prev, int next, 
+        int clock, BusDA bus, Receiver onPackReceivedHandler, 
+        int multiple, Handler onClockWaitingLoopHandler, 
         Handler onTokenOwnedLoopHandler, Handler onTokenWaitingLoopHandler
 ) {
     
     this->tokenPrev = prev;
     this->tokenNext = next;
     this->clock = clock;
-    this->bus = &bus;
+    
+    this->bus = bus;
+    
     this->address.length = multiple;
     
-    that = this;
+    ring = this;
 //    pack.message.buffer = buffer;
     initialized = master;
     
@@ -414,11 +421,22 @@ void Ring::start() {
 // ------------ BUS -------------
 
 void Ring::busReset(int level) {
-    for(int i=0; i < bus->length; i++) {
+    for(int i=0; i < bus.digital.length; i++) {
         //this->bus[i] = bus[i];
-        digitalWrite(bus->pins[i], HIGH);
+        digitalWrite(bus.digital.pins[i], HIGH);
+    }
+    for(int i=0; i < bus.analog.length; i++) {
+        //this->bus[i] = bus[i];
+        digitalWrite(bus.analog.pins[i], HIGH);
     }
 }
+
+//void Ring::busCopy(Bus busFrom, Bus* busTo) {
+//    busTo->length = busFrom.length;
+//    for(int i=0; i <= busFrom.length; i++) {
+//        busTo->pins[i] = busFrom.pins[i];
+//    }
+//}
 
 // ----------- TOKEN ------------
 
@@ -517,7 +535,7 @@ void Ring::sendClock() {
 }
 
 bool Ring::send(Pack pack) {
-    //debug("Package sending:", pack);
+    debug("Package sending:", pack);
     if(queue.isFull()) {
         error("queue full", 1);
         return false;
@@ -538,9 +556,9 @@ bool Ring::send(Pack pack) {
                 if(pack.type == RING_PACKTYPE_DIGITAL) {
                     send(pack.messageList.messages[k].buffer[i], RING_DATA_VALUE_BITS);
                 } else if(pack.type == RING_PACKTYPE_ANALOG) {
-                    analogWrite(bus->pins_analog[j], pack.messageList.messages[k].buffer[i]);
+                    analogWrite(bus.analog.pins[j], pack.messageList.messages[k].buffer[i]);
                     j++;
-                    if(j > bus->length_analog) {
+                    if(j > bus.analog.length) {
                         j = 0;
                         sendClock();
                     }
@@ -561,11 +579,11 @@ bool Ring::send(Pack pack) {
 void Ring::send(int data, int bits) {
     //debug("Send:", data);
     for(int i=0; i < bits;) {
-        for(int j=0; j < bus->length && i < bits; j++) {
+        for(int j=0; j < bus.digital.length && i < bits; j++) {
             int bit = data & 1;
             data >>= 1;
-            //debug("Write bit to bus[",j,"] =>", bit);
-            digitalWrite(bus->pins[j], bit);
+            //debug("Write bit to bus.digital.pins[",j,"] =>", bit);
+            digitalWrite(bus.digital.pins[j], bit);
             i++;
         }
         sendClock();
@@ -604,13 +622,13 @@ bool Ring::receive() {
                     pack.messageList.messages[k].buffer[i] = data;
                 }
             } else if(type == RING_PACKTYPE_ANALOG) {
-                int data = analogRead(bus->pins_analog[j]);            
+                int data = analogRead(bus.analog.pins[j]);            
                 if(our) {
                     // store if it's for us
                     pack.messageList.messages[k].buffer[i] = data;
                 }
                 j++;
-                if(j > bus->length_analog) {
+                if(j > bus.analog.length) {
                     j = 0;
                     clockWaiting();
                 }
@@ -627,9 +645,9 @@ int Ring::read(int bits) {
     //debug("Reading start...");
     int data = 0;
     for(int i=0; i < bits;) {
-        for(int j=0; j < bus->length && i < bits; j++) {
-            int bit = digitalRead(bus->pins[j]);
-            //debug("Read bit on bus[",j,"] <=", bit);
+        for(int j=0; j < bus.digital.length && i < bits; j++) {
+            int bit = digitalRead(bus.digital.pins[j]);
+            //debug("Read bit on bus.digital.pins[",j,"] <=", bit);
             data = data | (bit << i);
             i++;
         }
@@ -647,24 +665,24 @@ int Ring::read(int bits) {
     return data;
 }
 
-Ring* Ring::that;
+Ring* Ring::ring;
 
 void Ring::initReceiveHandler(Pack pack) {
-    if(!that->initialized) {
-        that->address.first = pack.messageList.messages[0].buffer[0];
+    if(!ring->initialized) {
+        ring->address.first = pack.messageList.messages[0].buffer[0];
         //debug("Slave set the address:", that->address);
     }
-    that->length = pack.messageList.messages[0].buffer[0];
+    ring->length = pack.messageList.messages[0].buffer[0];
 }
 
 void Ring::initTokenOwnedHandler() {
-    if(!that->initialized) {
-        that->pack.from.first = that->address.first;
-        that->pack.from.length = 1;
-        that->pack.messageList.length = 1;
-        that->pack.messageList.messages[0].make(that->address.first+that->address.length);
-        that->pack.make(that->pack.from, that->pack.messageList, RING_ADDR_BROADCAST, RING_PACKTYPE_DIGITAL);
-        that->send(that->pack);
-        that->initialized = true;
+    if(!ring->initialized) {
+        ring->pack.from.first = ring->address.first;
+        ring->pack.from.length = 1;
+        ring->pack.messageList.length = 1;
+        ring->pack.messageList.messages[0].make(ring->address.first+ring->address.length);
+        ring->pack.make(ring->pack.from, ring->pack.messageList, RING_ADDR_BROADCAST, RING_PACKTYPE_DIGITAL);
+        ring->send(ring->pack);
+        ring->initialized = true;
     }
 }

@@ -47,7 +47,7 @@ public:
     int counter;
     int output;     // NEURON_VALUE_MAX - 10 bits integer, max value: [0..1023] for ADC/DAC I/O
     
-    void init(int address, int begin, Platoon inputs = {-1, 0}, int bias = (NEURON_VALUE_MAX-NEURON_VALUE_MIN) / 2, int leak = 0, int momentum = 0);
+    void init(int address, int begin, Platoon inputs = {0, 0}, int bias = (NEURON_VALUE_MAX-NEURON_VALUE_MIN) / 2, int leak = 0, int momentum = 0);
     void randomize(Fraction chance);
     void randomize();
     void clear();
@@ -83,7 +83,7 @@ void Neuron::randomize(Fraction chance) {
             inputs.first = random(0, address-1);
             inputs.length = random(0, address-begin) + 1;
         } while(
-                inputs.first + inputs.length <= address
+                inputs.first + inputs.length > address
         );
     }
     for(int i=0; i < inputs.length; i++) {
@@ -203,7 +203,7 @@ void NeuronList::restore() {
 
 class Block: public Ring {
 public:
-    static Block* that;
+    static Block* block;
     
     NeuronList neuronList;
     
@@ -213,27 +213,27 @@ public:
     Pack packResp;
     
     void init(
-        const bool master, const int prev, const int next, const int clock, 
-        const Bus bus, const int begin, const int multiple = 1, 
+        bool master, int prev, int next, int clock, 
+        BusDA bus, int begin, int multiple = 1, 
         Handler onClockWaitingLoopHandler = RING_DEFAULT_HANDLER,
         Handler onTokenOwnedLoopHandler = RING_DEFAULT_HANDLER, 
         Handler onTokenWaitingLoopHandler = RING_DEFAULT_HANDLER
     );
-    static void onPackReceiveHandler(Pack pack);
+    static void onBlockPackReceiveHandler(Pack pack);
 };
 
-Block* Block::that;
+Block* Block::block;
 
 void Block::init(
-    const bool master, const int prev, const int next, const int clock, 
-    const Bus bus, const int begin, const int multiple, 
+    bool master, int prev, int next, int clock, 
+    BusDA bus, int begin, int multiple, 
     Handler onClockWaitingLoopHandler,
     Handler onTokenOwnedLoopHandler, 
     Handler onTokenWaitingLoopHandler
 ) {
-    that = this;
+    block = this;
     
-    Ring::init(master, prev, next, clock, bus, onPackReceivedHandler, multiple,
+    Ring::init(master, prev, next, clock, bus, onBlockPackReceiveHandler, multiple,
         onClockWaitingLoopHandler, onTokenOwnedLoopHandler, onTokenWaitingLoopHandler);
     
     // TODO randomSeed
@@ -244,7 +244,8 @@ void Block::init(
     
 }
 
-void Block::onPackReceiveHandler(Pack pack) {
+void Block::onBlockPackReceiveHandler(Pack pack) {
+    debug("onBlockPackReceiveHandler:", pack);
     // Todo: use 'that' as 'this' self
     if(pack.from.length != pack.messageList.length) {
         error("Ambiguous incoming package length.", 1);
@@ -256,26 +257,26 @@ void Block::onPackReceiveHandler(Pack pack) {
     ) {
         // handle base commands
         if(
-            pack.to >= that->neuronList.neurons[0].address &&
-            (pack.to < that->neuronList.neurons[0].address + that->neuronList.length)
+            pack.to >= block->neuronList.neurons[0].address &&
+            (pack.to < block->neuronList.neurons[0].address + block->neuronList.length)
         ) {
             if(pack.messageList.messages[0].buffer[0] == BASE_CMD_GET_STATE) {
-                that->packResp.messageList.messages[0].buffer[0] = BASE_MSG_STATE;
-                that->packResp.messageList.messages[0].length = 
-                    that->neuronList.neurons[pack.to - that->neuronList.neurons[0].address]
+                block->packResp.messageList.messages[0].buffer[0] = BASE_MSG_STATE;
+                block->packResp.messageList.messages[0].length = 
+                    block->neuronList.neurons[pack.to - block->neuronList.neurons[0].address]
                         .exportState(
-                            &that->packResp.messageList.messages[0].buffer[1]
+                            &block->packResp.messageList.messages[0].buffer[1]
                         );
             
-                that->packResp.from.first = pack.to;
-                that->packResp.from.length = 1;
-                that->packResp.to = BASE_ADDRESS;
-                that->packResp.type = RING_PACKTYPE_DIGITAL;
-                that->packResp.messageList.length = 1;
+                block->packResp.from.first = pack.to;
+                block->packResp.from.length = 1;
+                block->packResp.to = BASE_ADDRESS;
+                block->packResp.type = RING_PACKTYPE_DIGITAL;
+                block->packResp.messageList.length = 1;
                 
-                that->send(that->packResp);
+                block->send(block->packResp);
             } else if(pack.messageList.messages[0].buffer[0] == BASE_CMD_SET_STATE) {
-                that->neuronList.neurons[pack.to - that->neuronList.neurons[0].address]
+                block->neuronList.neurons[pack.to - block->neuronList.neurons[0].address]
                     .importState(
                         &pack.messageList.messages[0].buffer[1]
                     );
@@ -289,12 +290,12 @@ void Block::onPackReceiveHandler(Pack pack) {
                 Fraction chance;
                 chance.denominator = pack.messageList.messages[0].buffer[1];
                 chance.numerator = pack.messageList.messages[0].buffer[2];
-                that->neuronList.neurons[pack.to - that->neuronList.neurons[0].address]
+                block->neuronList.neurons[pack.to - block->neuronList.neurons[0].address]
                     .randomize(chance);
             } else if(pack.messageList.messages[0].buffer[0] == BASE_CMD_STORE) {
-                that->neuronList.store();
+                block->neuronList.store();
             } else if(pack.messageList.messages[0].buffer[0] == BASE_CMD_RESTORE) {
-                that->neuronList.restore();
+                block->neuronList.restore();
             } else {
                 error("Unknown base command. (BC)", 2);
             }
@@ -303,33 +304,33 @@ void Block::onPackReceiveHandler(Pack pack) {
         // goes through each incoming message
         for(int i = 0; i < pack.from.length; i++) {
             // goes through each neuron in this block
-            for(int j = 0; j < that->neuronList.length; j++) {
+            for(int j = 0; j < block->neuronList.length; j++) {
                 int packFrom = pack.from.first+i;
                 // if current message for current neuron..
                 if(
-                        packFrom >= that->neuronList.neurons[j].inputs.first && 
+                        packFrom >= block->neuronList.neurons[j].inputs.first && 
                         packFrom < 
-                            that->neuronList.neurons[j].inputs.first +
-                            that->neuronList.neurons[j].inputs.length
+                            block->neuronList.neurons[j].inputs.first +
+                            block->neuronList.neurons[j].inputs.length
                 ) {
                     // collect to SUM
-                    bool activated = that->neuronList.neurons[j].collect(
+                    bool activated = block->neuronList.neurons[j].collect(
                         packFrom, 
                         pack.messageList.messages[j].buffer[0]
                     );
                     // send output if neuron is activated
                     if(activated) {
-                        that->packOut.messageList.length = 1;
-                        that->packOut.messageList.messages[j].buffer[0] = 
-                                that->neuronList.neurons[j].output;
-                        that->counter--;
-                        if(that->counter == 0) {                    
-                            that->packOut.from.first = that->address.first;
-                            that->packOut.from.length = that->address.length;
-                            that->packOut.to = RING_ADDR_BROADCAST;
-                            that->packOut.type = RING_PACKTYPE_ANALOG;
-                            that->send(that->packOut);
-                            that->counter = that->neuronList.length;
+                        block->packOut.messageList.length = 1;
+                        block->packOut.messageList.messages[j].buffer[0] = 
+                                block->neuronList.neurons[j].output;
+                        block->counter--;
+                        if(block->counter == 0) {                    
+                            block->packOut.from.first = block->address.first;
+                            block->packOut.from.length = block->address.length;
+                            block->packOut.to = RING_ADDR_BROADCAST;
+                            block->packOut.type = RING_PACKTYPE_ANALOG;
+                            block->send(block->packOut);
+                            block->counter = block->neuronList.length;
                         }
                     }
                 }
